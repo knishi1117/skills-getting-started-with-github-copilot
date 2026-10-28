@@ -434,6 +434,37 @@ main:focus {
   color: var(--ok);
 }
 
+.copy-status__next,
+.copy-status__note {
+  display: block;
+  color: var(--text);
+}
+
+.copy-status__next {
+  margin-top: 4px;
+  font-weight: 700;
+}
+
+.copy-status__note {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.mismatch-hint {
+  margin: 4px 0 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--primary-soft);
+}
+
+.mismatch-hint[hidden] {
+  display: none;
+}
+
+.mismatch-hint p {
+  margin: 0 0 4px;
+}
+
 .copy-status--error {
   background: var(--danger-soft);
   color: var(--text);

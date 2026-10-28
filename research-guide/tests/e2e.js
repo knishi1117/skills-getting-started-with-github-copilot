@@ -94,7 +94,7 @@ async function storedData(page) {
       await page.getByRole("heading", { name: "次のお仕事で試せそうなこと" }).waitFor();
       await page.getByText("見出しごとに「ここで何を伝えるか」を一文添えてみましょう。").waitFor();
       await page.getByRole("heading", { name: "回答を見るポイント" }).waitFor();
-      for (const name of ["指示文をコピー", "☆ お気に入りに保存", "試してみた", "別の方法を探す"]) {
+      for (const name of ["指示文をコピー", "☆ お気に入りに保存", "試してみた", "ほかの困りごとを見る"]) {
         await page.getByRole("button", { name, exact: true }).waitFor();
       }
       await page.getByText("個人情報や社外秘の情報は追記しないでください。", { exact: false }).waitFor();
@@ -104,6 +104,7 @@ async function storedData(page) {
       const expected = (await page.locator(".prompt__text").textContent()).trim();
       await page.getByRole("button", { name: "指示文をコピー" }).click();
       await page.getByText("指示文をコピーしました。").waitFor();
+      await page.getByText("次に：普段お使いの生成AI（職場で利用が認められたもの）に貼り付け、続けて報告の目的とメモを伝えてください。").waitFor();
       const clip = await page.evaluate(() => navigator.clipboard.readText());
       assert.strictEqual(clip, expected);
       assert.ok(clip.startsWith("以下の報告目的とメモから"));
@@ -162,9 +163,21 @@ async function storedData(page) {
       assert.strictEqual(d.practice.organize.feedback, "mismatch");
     });
 
-    await step("別の方法を探す → ほかのカードへ", async () => {
-      await page.getByRole("button", { name: "別の方法を探す" }).click();
-      await page.getByRole("heading", { name: "ほかの方法" }).waitFor();
+    await step("「少し合わなかった」で聞き方を調整するカードを案内", async () => {
+      const link = page.getByRole("button", { name: "聞き方を調整したいときはこちら →" });
+      assert.ok(await link.isVisible());
+      await page.getByLabel("役立った").check();
+      assert.ok(!(await link.isVisible()));
+      await page.getByLabel("少し合わなかった").check();
+      await link.click();
+      assert.strictEqual(await page.locator("h1").textContent(), "AIの回答が、しっくりこない");
+      await page.goBack();
+      assert.strictEqual(await page.locator("h1").textContent(), "情報が多くて、整理できない");
+    });
+
+    await step("ほかの困りごとを見る → ほかのカードへ", async () => {
+      await page.getByRole("button", { name: "ほかの困りごとを見る" }).click();
+      await page.getByRole("heading", { name: "ほかの困りごと" }).waitFor();
       assert.strictEqual(await page.locator(".alt .fav-item").count(), 4);
     });
 

@@ -20,6 +20,7 @@
       prompt:
         "これから調べたいテーマを伝えます。調査範囲を絞るために、報告相手・報告の目的・対象期間を、1つずつ質問してください。回答が難しい場合は選択肢を示してください。最後に、調べる問いを3つに整理してください。",
       check: ["問いが広すぎず、調べた結果を報告にどう使うか想像できますか。"],
+      nextStep: "普段お使いの生成AI（職場で利用が認められたもの）に貼り付け、続けて調べたいテーマを伝えてください。",
     },
     {
       id: "organize",
@@ -31,6 +32,7 @@
         "分類理由が報告目的に合っていますか。",
         "自分の考えに反する重要な情報が除外されていませんか。",
       ],
+      nextStep: "普段お使いの生成AI（職場で利用が認められたもの）に貼り付け、続けて報告の目的と、整理したい情報を伝えてください。",
     },
     {
       id: "refine",
@@ -39,6 +41,7 @@
       prompt:
         "先ほどの回答を、今回の目的に合う内容へ具体化したいです。追加すると役立つ条件を3つ以内で挙げ、私に1つずつ質問してください。私が伝えていない事情を推測で補わず、不明な点は不明のまま扱ってください。その後、回答を修正してください。",
       check: ["目的に合う内容になりましたか。", "事実や数字が勝手に追加されていませんか。"],
+      nextStep: "しっくりこなかった回答が出ている生成AIの画面で、そのやり取りの続きに貼り付けて送ってください。",
     },
     {
       id: "outline",
@@ -47,6 +50,7 @@
       prompt:
         "以下の報告目的とメモから、報告書の骨子案を作ってください。各章に「見出し」「伝えることを一文で」「使う根拠」「不足している情報」を示してください。結論は仮説として扱い、根拠が足りない部分は無理につなげず、追加確認が必要と記してください。",
       check: ["報告相手の知りたいことに答える順番ですか。", "根拠より強い結論になっていませんか。"],
+      nextStep: "普段お使いの生成AI（職場で利用が認められたもの）に貼り付け、続けて報告の目的とメモを伝えてください。",
     },
   ];
 
@@ -612,7 +616,11 @@
       copyStatus.replaceChildren();
       if (ok) {
         copyStatus.className = "copy-status copy-status--ok";
-        copyStatus.textContent = "指示文をコピーしました。";
+        copyStatus.append(
+          h("strong", { text: "指示文をコピーしました。" }),
+          h("span", { class: "copy-status__next", text: "次に：" + card.nextStep }),
+          h("span", { class: "copy-status__note", text: "個人情報や社外秘の情報は書き足さないでください。" })
+        );
       } else {
         copyStatus.className = "copy-status copy-status--error";
         copyStatus.append(
@@ -644,6 +652,11 @@
       store.setTried(card.id, now);
       rerender(now ? "[data-feedback] input" : "[data-tried]");
       announce(now ? "「試してみた」を記録しました。感想は選ばなくてもかまいません。" : "「試してみた」の記録を取り消しました。");
+    }
+
+    function toggleAlternatives() {
+      state.showAlternatives = !state.showAlternatives;
+      rerender(state.showAlternatives ? "#alt-heading" : "[data-alt]");
     }
 
     function onFeedback(value) {
@@ -703,13 +716,10 @@
             "aria-pressed": practice ? "true" : "false",
             "data-tried": "",
           }),
-          button("別の方法を探す", () => {
-            state.showAlternatives = !state.showAlternatives;
-            rerender(state.showAlternatives ? "#alt-heading" : "[data-alt]");
-          }, { class: "btn btn--ghost", "aria-expanded": state.showAlternatives ? "true" : "false", "data-alt": "" })
+          button("ほかの困りごとを見る", toggleAlternatives, { class: "btn btn--ghost", "aria-expanded": state.showAlternatives ? "true" : "false", "data-alt": "" })
         ),
 
-        practice ? feedbackFieldset(card.id, practice, onFeedback) : null
+        practice ? feedbackFieldset(card.id, practice, onFeedback, toggleAlternatives) : null
       ),
 
       state.showAlternatives ? alternatives(card.id) : null,
@@ -717,7 +727,27 @@
     );
   }
 
-  function feedbackFieldset(cardId, practice, onFeedback) {
+  function feedbackFieldset(cardId, practice, onFeedback, onShowAlternatives) {
+    // 「少し合わなかった」を選んだときだけ、次に試せる案内を出す
+    const mismatchHint =
+      cardId === "refine"
+        ? h(
+            "div",
+            { class: "mismatch-hint" },
+            h("p", { text: "条件を足しても合わないときは、困りごと自体を見直してみましょう。" }),
+            button("ほかの困りごとを見る", onShowAlternatives, { class: "btn btn--secondary btn--small" })
+          )
+        : h(
+            "div",
+            { class: "mismatch-hint" },
+            h("p", { text: "AIの回答が目的に合わなかったときは、聞き方を調整できます。" }),
+            button("聞き方を調整したいときはこちら →", () => openCard("refine", "home"), {
+              class: "btn btn--secondary btn--small",
+              "data-refine-link": "",
+            })
+          );
+    mismatchHint.hidden = practice.feedback !== "mismatch";
+
     return h(
       "fieldset",
       { class: "feedback", "data-feedback": "" },
@@ -734,12 +764,16 @@
               name: "feedback-" + cardId,
               value: f.value,
               checked: practice.feedback === f.value,
-              onchange: () => onFeedback(f.value),
+              onchange: () => {
+                onFeedback(f.value);
+                mismatchHint.hidden = f.value !== "mismatch";
+              },
             }),
             h("span", { text: f.label })
           )
         )
       ),
+      mismatchHint,
       h("p", { class: "small muted", text: "選んだ感想は、このブラウザー内にだけ保存されます。" })
     );
   }
@@ -748,7 +782,7 @@
     return h(
       "section",
       { class: "section alt", "aria-labelledby": "alt-heading" },
-      h("h2", { id: "alt-heading", tabindex: "-1", text: "ほかの方法" }),
+      h("h2", { id: "alt-heading", tabindex: "-1", text: "ほかの困りごと" }),
       h(
         "ul",
         { class: "fav-list" },
