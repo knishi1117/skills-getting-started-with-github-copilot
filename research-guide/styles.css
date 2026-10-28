@@ -693,3 +693,81 @@ progress {
     scroll-behavior: auto !important;
   }
 }
+
+/* カテゴリ・パンくず・有料機能の見本ページ */
+.entry--category {
+  min-height: 72px;
+}
+
+.entry__title {
+  display: block;
+  font-size: 1.1rem;
+}
+
+.entry__desc {
+  display: block;
+  font-weight: 400;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.fav-item__body {
+  display: flex;
+  flex-direction: column;
+}
+
+.fav-item__category {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.crumbs__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.crumbs__list li + li::before {
+  content: "＞";
+  color: var(--muted);
+  margin: 0 8px;
+  font-size: 0.8rem;
+}
+
+.notice--info {
+  margin: 0 0 1em;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: var(--primary-soft);
+  border: 1px solid var(--primary);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  background: var(--surface);
+}
+
+.compare th,
+.compare td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.compare thead th {
+  background: var(--bg);
+}
+
+.compare tbody th {
+  white-space: nowrap;
+}

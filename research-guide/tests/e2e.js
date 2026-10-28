@@ -57,6 +57,8 @@ async function answerQuiz(page, values) {
   return seen;
 }
 
+const openCategory = (page, id) => page.locator(`[data-category="${id}"]`).click();
+
 async function storedData(page) {
   return page.evaluate((k) => JSON.parse(localStorage.getItem(k) || "null"), KEY);
 }
@@ -70,7 +72,17 @@ async function storedData(page) {
       context: { permissions: ["clipboard-read", "clipboard-write"] },
     });
 
-    await step("トップ見出し・4つの入口・お気に入り・5問のチェック導線", async () => {
+    await step("トップ見出し・2つのカテゴリ・お気に入り・有料の見本ページ導線", async () => {
+      assert.strictEqual(await page.locator("h1").textContent(), "今日は、どのお仕事を進めますか？");
+      const cats = await page.locator(".entry__title").allTextContents();
+      assert.deepStrictEqual(cats, ["情報収集・報告書づくり", "Excel作業"]);
+      await page.getByRole("heading", { name: "お気に入り" }).waitFor();
+      await page.getByRole("button", { name: "有料でできること（準備中）" }).waitFor();
+      assert.strictEqual(await page.getByRole("button", { name: "5問のチェックを始める" }).count(), 0);
+    });
+
+    await step("情報収集・報告書づくり：4つの入口と5問のチェック導線", async () => {
+      await openCategory(page, "research");
       assert.strictEqual(await page.locator("h1").textContent(), "お仕事で、どこに迷っていますか？");
       const entries = await page.locator(".entry__text").allTextContents();
       assert.deepStrictEqual(entries, [
@@ -79,7 +91,6 @@ async function storedData(page) {
         "AIの回答が、しっくりこない",
         "報告書の流れが、決まらない",
       ]);
-      await page.getByRole("heading", { name: "お気に入り" }).waitFor();
       await page.getByRole("heading", { name: "どこから始めるか迷ったら、5問のチェック" }).waitFor();
     });
 
@@ -130,6 +141,7 @@ async function storedData(page) {
       },
     });
     await step("コピー失敗時はエラー表示と全文選択で手動コピーできる", async () => {
+      await openCategory(page, "research");
       await page.getByRole("button", { name: /調べたいことが/ }).click();
       await page.getByRole("button", { name: "指示文をコピー" }).click();
       await page.getByText("自動でコピーできませんでした。").waitFor();
@@ -144,6 +156,7 @@ async function storedData(page) {
   {
     const { context, page } = await newPage(browser);
     await step("お気に入り保存／解除と schemaVersion", async () => {
+      await openCategory(page, "research");
       await page.getByRole("button", { name: /情報が多くて/ }).click();
       await page.getByRole("button", { name: "☆ お気に入りに保存" }).click();
       const btn = page.getByRole("button", { name: "★ お気に入りを解除" });
@@ -187,6 +200,7 @@ async function storedData(page) {
       const favs = await page.locator(".fav-list .fav-item").allTextContents();
       assert.strictEqual(favs.length, 1);
       assert.ok(favs[0].includes("情報が多くて、整理できない"));
+      assert.ok(favs[0].includes("情報収集・報告書づくり"), "所属カテゴリを併記");
       assert.ok(favs[0].includes("試してみた"));
     });
 
@@ -202,11 +216,153 @@ async function storedData(page) {
     await context.close();
   }
 
+  // --- 2カテゴリ・8カード ---------------------------------------------------
+  {
+    const { context, page, errors } = await newPage(browser, {
+      context: { permissions: ["clipboard-read", "clipboard-write"] },
+    });
+    const EXPECTED = {
+      research: ["調べたいことが、うまくまとまらない", "情報が多くて、整理できない", "AIの回答が、しっくりこない", "報告書の流れが、決まらない"],
+      excel: ["使いたい関数が、分からない", "数式のエラーを、解消したい", "集計の進め方に、迷っている", "表を見やすく、整えたい"],
+    };
+    const CAT_TITLE = { research: "情報収集・報告書づくり", excel: "Excel作業" };
+
+    await step("2カテゴリ・計8カードへ、トップ→カテゴリ→困りごと→カードで移動できる", async () => {
+      for (const cat of ["research", "excel"]) {
+        for (let i = 0; i < 4; i++) {
+          await page.getByRole("button", { name: "調査・報告の進め方ガイド" }).click();
+          await openCategory(page, cat);
+          const entries = await page.locator(".entry__text").allTextContents();
+          assert.deepStrictEqual(entries, EXPECTED[cat]);
+          await page.locator(".entry").nth(i).click();
+          assert.strictEqual(await page.locator("h1").textContent(), EXPECTED[cat][i]);
+          await page.getByRole("heading", { name: "次のお仕事で試せそうなこと" }).waitFor();
+          await page.getByRole("heading", { name: "回答を見るポイント" }).waitFor();
+          for (const name of ["指示文をコピー", "☆ お気に入りに保存", "試してみた", "ほかの困りごとを見る"]) {
+            await page.getByRole("button", { name, exact: true }).waitFor();
+          }
+          // パンくず：所属カテゴリへ戻れる
+          assert.strictEqual(await page.locator("[data-crumb-category]").textContent(), CAT_TITLE[cat]);
+          await page.locator("[data-crumb-category]").click();
+          assert.ok((await page.locator(".entry__text").allTextContents()).includes(EXPECTED[cat][i]));
+          await page.locator(".entry").nth(i).click();
+          // パンくず：トップへ戻れる
+          await page.getByRole("button", { name: "トップ", exact: true }).click();
+          assert.strictEqual(await page.locator("h1").textContent(), "今日は、どのお仕事を進めますか？");
+        }
+      }
+    });
+
+    await step("Excelカード：コピー・ほかの困りごと（同じカテゴリ内）・注意書き", async () => {
+      await openCategory(page, "excel");
+      await page.getByRole("button", { name: /数式のエラーを/ }).click();
+      const expected = (await page.locator(".prompt__text").textContent()).trim();
+      await page.getByRole("button", { name: "指示文をコピー" }).click();
+      await page.getByText("指示文をコピーしました。").waitFor();
+      assert.strictEqual(await page.evaluate(() => navigator.clipboard.readText()), expected);
+      await page.getByText("列の見出し名や架空の例で伝えてください", { exact: false }).waitFor();
+      await page.getByRole("button", { name: "ほかの困りごとを見る" }).click();
+      const alts = await page.locator(".alt .fav-item").allTextContents();
+      assert.deepStrictEqual(alts, ["使いたい関数が、分からない", "集計の進め方に、迷っている", "表を見やすく、整えたい"]);
+      assert.strictEqual(await page.getByRole("button", { name: "5問のチェックを始める" }).count(), 0);
+    });
+
+    await step("Excelカテゴリには診断を置かない", async () => {
+      await page.getByRole("button", { name: "トップ", exact: true }).click();
+      await openCategory(page, "excel");
+      assert.strictEqual(await page.getByText("5問のチェック").count(), 0);
+    });
+
+    await step("トップのお気に入りに両カテゴリをまとめて表示し、所属カテゴリを併記", async () => {
+      await page.getByRole("button", { name: /表を見やすく/ }).click();
+      await page.getByRole("button", { name: "☆ お気に入りに保存" }).click();
+      await page.getByRole("button", { name: "試してみた", exact: true }).click();
+      await page.locator("[data-crumb-category]").click(); // Excel作業へ
+      await page.getByRole("button", { name: "トップに戻る" }).click();
+      await openCategory(page, "research");
+      await page.getByRole("button", { name: /報告書の流れが/ }).click();
+      await page.getByRole("button", { name: "☆ お気に入りに保存" }).click();
+      await page.getByRole("button", { name: "トップ", exact: true }).click();
+      const items = page.locator(".fav-list .fav-item");
+      assert.strictEqual(await items.count(), 2);
+      assert.deepStrictEqual(await page.locator(".fav-item__category").allTextContents(), ["Excel作業", "情報収集・報告書づくり"]);
+      assert.ok((await items.nth(0).textContent()).includes("試してみた"));
+      await items.nth(0).click();
+      assert.strictEqual(await page.locator("h1").textContent(), "表を見やすく、整えたい");
+      assert.strictEqual(await page.locator("[data-crumb-category]").textContent(), "Excel作業");
+    });
+
+    await step("ブラウザーの戻るでカード→カテゴリ→トップと戻れる", async () => {
+      await page.getByRole("button", { name: "トップ", exact: true }).click();
+      await openCategory(page, "excel");
+      await page.getByRole("button", { name: /使いたい関数が/ }).click();
+      await page.goBack();
+      assert.strictEqual(await page.locator("h1").textContent(), "Excel作業の、どこに迷っていますか？");
+      await page.goBack();
+      assert.strictEqual(await page.locator("h1").textContent(), "今日は、どのお仕事を進めますか？");
+      assert.strictEqual(page.url(), BASE);
+    });
+
+    assert.deepStrictEqual(errors, []);
+    await context.close();
+  }
+
+  // --- 既存の保存記録の引き継ぎ ----------------------------------------------
+  await step("以前の版で保存したお気に入り・記録・診断結果がそのまま使える", async () => {
+    const legacy = {
+      schemaVersion: 1,
+      favorites: ["organize", "scope"],
+      practice: { organize: { tried: true, feedback: "helpful" }, outline: { tried: true, feedback: null } },
+      latestResult: {
+        questionIds: ["A2", "B1", "C3", "D2", "E1"],
+        answers: { purpose: "always", question: "notyet", organize: "sometimes", evidence: "none", outline: "always" },
+        savedOn: "2026-10-01",
+      },
+    };
+    const { context, page, errors } = await newPage(browser);
+    await page.evaluate((d) => localStorage.setItem("research-report-guide", d), JSON.stringify(legacy));
+    await page.reload();
+    assert.strictEqual(await page.locator("#storage-notice").isVisible(), false);
+    const favs = await page.locator(".fav-list .fav-item").allTextContents();
+    assert.strictEqual(favs.length, 2);
+    assert.ok(favs[0].includes("情報が多くて、整理できない") && favs[0].includes("試してみた"));
+    assert.ok(favs[1].includes("調べたいことが、うまくまとまらない"));
+    await openCategory(page, "research");
+    await page.getByRole("button", { name: "保存した結果を見る" }).click();
+    await page.getByText("2026-10-01 保存", { exact: false }).waitFor();
+    assert.strictEqual(await page.locator(".suggestion--primary .suggestion__area").textContent(), "問い");
+    const after = await storedData(page);
+    assert.deepStrictEqual(after, legacy, "読み込みだけでは保存データを書き換えない");
+    assert.deepStrictEqual(errors, []);
+    await context.close();
+  });
+
+  // --- 有料機能の見本ページ ---------------------------------------------------
+  await step("有料でできること（準備中）：構想と無料との違いを示し、購入・登録の操作はない", async () => {
+    const { context, page, requests } = await newPage(browser);
+    await page.getByRole("button", { name: "有料でできること（準備中）" }).click();
+    assert.strictEqual(await page.locator("h1").textContent(), "有料でできること（準備中）");
+    await page.getByRole("heading", { name: "構想1：条件に合わせた作業ガイド" }).waitFor();
+    await page.getByRole("heading", { name: "構想2：追加カテゴリ" }).waitFor();
+    await page.getByRole("heading", { name: "無料で使える機能との違い" }).waitFor();
+    await page.getByText("現在、有料機能の購入や会員登録はできません。", { exact: false }).waitFor();
+    const body = await page.locator("main").textContent();
+    assert.ok(!/[0-9０-９]+\s*円|¥|\$/.test(body), "価格を記載しない");
+    assert.ok(!/\d{4}年|\d+月(頃|ごろ|予定)|公開予定日/.test(body), "公開予定日を記載しない");
+    const buttons = await page.locator("main button").allTextContents();
+    for (const t of buttons) assert.ok(!/購入|登録|ログイン|申し込|アンロック|支払/.test(t), "購入系の操作: " + t);
+    assert.strictEqual(await page.locator("main a[href]").count(), 0, "外部リンクなし");
+    await page.getByRole("button", { name: "無料のカードを使う（トップへ）" }).click();
+    assert.strictEqual(await page.locator("h1").textContent(), "今日は、どのお仕事を進めますか？");
+    await context.close();
+  });
+
   // --- 3. 5問の診断 --------------------------------------------------------
   {
     const { context, page, requests, errors } = await newPage(browser);
 
     await step("冒頭文の表示", async () => {
+      await openCategory(page, "research");
       await page.getByRole("button", { name: "5問のチェックを始める" }).click();
       await page
         .getByText("最近の調べものや報告書づくりを思い浮かべて、今の自分に近いものを選んでください。正解・不正解はありません。")
@@ -267,6 +423,7 @@ async function storedData(page) {
   // --- 結果の分岐 ----------------------------------------------------------
   async function resultFor(values, check) {
     const { context, page } = await newPage(browser);
+    await openCategory(page, "research");
     await page.getByRole("button", { name: "5問のチェックを始める" }).click();
     const labels = await answerQuiz(page, values);
     labels.forEach((l, i) => assert.ok(l.includes(LABELS[i]) && l.includes(i + 1 + "問目"), l));
@@ -340,7 +497,7 @@ async function storedData(page) {
       const d = await storedData(page);
       assert.strictEqual(d.latestResult.answers.purpose, "notyet");
       assert.strictEqual(d.latestResult.questionIds.length, 5);
-      await page.getByRole("button", { name: "トップに戻る" }).click();
+      await page.getByRole("button", { name: "「情報収集・報告書づくり」に戻る" }).click();
       await page.getByRole("button", { name: "保存した結果を見る" }).click();
       assert.strictEqual(await page.locator(".suggestion--primary .suggestion__area").textContent(), "目的");
       // 関連カードから開き、結果に戻る
@@ -369,6 +526,7 @@ async function storedData(page) {
       },
     });
     await page.getByText("端末内の保存データを読み込めなかったため", { exact: false }).waitFor();
+    await openCategory(page, "research");
     await page.getByRole("button", { name: /AIの回答が/ }).click();
     await page.getByRole("button", { name: "☆ お気に入りに保存" }).click();
     assert.deepStrictEqual((await storedData(page)).favorites, ["refine"]);
@@ -388,10 +546,11 @@ async function storedData(page) {
       },
     });
     await page.getByText("この環境ではブラウザー内に保存できません。", { exact: false }).waitFor();
+    await openCategory(page, "research");
     await page.getByRole("button", { name: /情報が多くて/ }).click();
     await page.getByRole("button", { name: "☆ お気に入りに保存" }).click();
     await page.getByRole("button", { name: "★ お気に入りを解除" }).waitFor();
-    await page.getByRole("button", { name: "調査・報告の進め方ガイド" }).click();
+    await page.locator("[data-crumb-category]").click();
     await page.getByRole("button", { name: "5問のチェックを始める" }).click();
     await answerQuiz(page, ["notyet", "notyet", "notyet", "notyet", "notyet"]);
     await page.getByRole("heading", { name: "次のお仕事で試せそうなこと", level: 1 }).waitFor();
@@ -407,7 +566,8 @@ async function storedData(page) {
         };
       },
     });
-    await page.getByRole("button", { name: /調べたいことが/ }).click();
+    await openCategory(page, "excel");
+    await page.getByRole("button", { name: /使いたい関数が/ }).click();
     await page.getByRole("button", { name: "☆ お気に入りに保存" }).click();
     await page.waitForFunction(() => document.getElementById("live").textContent.includes("保存できなかった"));
     assert.deepStrictEqual(errors, []);
@@ -431,6 +591,8 @@ async function storedData(page) {
       }
       throw new Error("フォーカスが届かない: " + re);
     }
+    await tabTo(/^情報収集・報告書づくり/);
+    await page.keyboard.press("Enter");
     await tabTo(/情報が多くて/);
     await page.keyboard.press("Enter");
     await tabTo(/^指示文をコピー$/);
@@ -446,7 +608,7 @@ async function storedData(page) {
     await page.keyboard.press("ArrowRight");
     assert.strictEqual((await storedData(page)).practice.organize.feedback, "mismatch");
 
-    await tabTo(/トップに戻る/, 60);
+    await tabTo(/^情報収集・報告書づくり$/, 60); // パンくずの所属カテゴリ
     await page.keyboard.press("Enter");
     await tabTo(/^5問のチェックを始める$/);
     await page.keyboard.press("Enter");
@@ -460,6 +622,20 @@ async function storedData(page) {
     }
     await page.getByRole("heading", { name: "次のお仕事で試せそうなこと", level: 1 }).waitFor();
     assert.strictEqual(await page.locator(".suggestion--primary .suggestion__area").textContent(), "目的");
+
+    // Excel作業もキーボードだけで：トップ → カテゴリ → カード → お気に入り
+    await tabTo(/^トップに戻る$/, 60);
+    await page.keyboard.press("Enter");
+    await tabTo(/^Excel作業/);
+    await page.keyboard.press("Enter");
+    await tabTo(/数式のエラーを/);
+    await page.keyboard.press("Enter");
+    await tabTo(/お気に入りに保存/);
+    await page.keyboard.press("Enter");
+    assert.deepStrictEqual((await storedData(page)).favorites, ["organize", "excel-error"]);
+    await tabTo(/^トップ$/, 60);
+    await page.keyboard.press("Enter");
+    assert.strictEqual(await page.locator("h1").textContent(), "今日は、どのお仕事を進めますか？");
     await context.close();
   });
 
@@ -471,10 +647,22 @@ async function storedData(page) {
     const noOverflow = () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
     assert.ok(await noOverflow());
     if (SHOT_DIR) await page.screenshot({ path: path.join(SHOT_DIR, "mobile-home.png"), fullPage: true });
+    await page.locator('[data-category="excel"]').tap();
+    assert.ok(await noOverflow());
+    if (SHOT_DIR) await page.screenshot({ path: path.join(SHOT_DIR, "mobile-excel.png"), fullPage: true });
+    await page.getByRole("button", { name: /集計の進め方に/ }).tap();
+    assert.ok(await noOverflow());
+    if (SHOT_DIR) await page.screenshot({ path: path.join(SHOT_DIR, "mobile-excel-card.png"), fullPage: true });
+    await page.getByRole("button", { name: "トップ", exact: true }).tap();
+    await page.getByRole("button", { name: "有料でできること（準備中）" }).tap();
+    assert.ok(await noOverflow());
+    if (SHOT_DIR) await page.screenshot({ path: path.join(SHOT_DIR, "mobile-paid.png"), fullPage: true });
+    await page.getByRole("button", { name: "調査・報告の進め方ガイド" }).tap();
+    await page.locator('[data-category="research"]').tap();
     await page.getByRole("button", { name: /調べたいことが/ }).tap();
     assert.ok(await noOverflow());
     if (SHOT_DIR) await page.screenshot({ path: path.join(SHOT_DIR, "mobile-card.png"), fullPage: true });
-    await page.getByRole("button", { name: "調査・報告の進め方ガイド" }).tap();
+    await page.locator("[data-crumb-category]").tap();
     await page.getByRole("button", { name: "5問のチェックを始める" }).tap();
     await page.getByRole("button", { name: "始める" }).tap();
     await page.locator('input[value="notyet"]').check();
@@ -494,12 +682,16 @@ async function storedData(page) {
     const { context, page, requests } = await newPage(browser, {
       context: { permissions: ["clipboard-read", "clipboard-write"] },
     });
-    await page.getByRole("button", { name: /AIの回答が/ }).click();
+    await openCategory(page, "excel");
+    await page.getByRole("button", { name: /表を見やすく/ }).click();
     await page.getByRole("button", { name: "指示文をコピー" }).click();
     await page.getByRole("button", { name: "☆ お気に入りに保存" }).click();
     await page.getByRole("button", { name: "試してみた", exact: true }).click();
     await page.getByLabel("役立った").check();
+    await page.getByRole("button", { name: "トップ", exact: true }).click();
+    await page.getByRole("button", { name: "有料でできること（準備中）" }).click();
     await page.getByRole("button", { name: "調査・報告の進め方ガイド" }).click();
+    await openCategory(page, "research");
     await page.getByRole("button", { name: "5問のチェックを始める" }).click();
     await answerQuiz(page, ["notyet", "sometimes", "none", "always", "notyet"]);
     await page.getByRole("button", { name: "この結果をブラウザー内に保存" }).click();

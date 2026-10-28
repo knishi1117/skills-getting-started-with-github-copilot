@@ -12,9 +12,27 @@
   // コンテンツ
   // ---------------------------------------------------------------------------
 
+  const CATEGORIES = [
+    {
+      id: "research",
+      title: "情報収集・報告書づくり",
+      description: "公開情報の調べもの、情報の整理、報告書の骨子づくり",
+      question: "お仕事で、どこに迷っていますか？",
+    },
+    {
+      id: "excel",
+      title: "Excel作業",
+      description: "関数選び、数式のエラー、集計、表の見た目",
+      question: "Excel作業の、どこに迷っていますか？",
+    },
+  ];
+
+  const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map((c) => [c.id, c]));
+
   const CARDS = [
     {
       id: "scope",
+      category: "research",
       title: "調べたいことが、うまくまとまらない",
       action: "「誰に・何のために・いつまでの変化を伝えるか」を仮置きしてみましょう。",
       prompt:
@@ -24,6 +42,7 @@
     },
     {
       id: "organize",
+      category: "research",
       title: "情報が多くて、整理できない",
       action: "報告の目的に直接答える情報を、先に取り出してみましょう。",
       prompt:
@@ -36,6 +55,7 @@
     },
     {
       id: "refine",
+      category: "research",
       title: "AIの回答が、しっくりこない",
       action: "答え直してもらう前に、何が足りないかを整理してみましょう。",
       prompt:
@@ -45,6 +65,7 @@
     },
     {
       id: "outline",
+      category: "research",
       title: "報告書の流れが、決まらない",
       action: "見出しごとに「ここで何を伝えるか」を一文添えてみましょう。",
       prompt:
@@ -52,9 +73,52 @@
       check: ["報告相手の知りたいことに答える順番ですか。", "根拠より強い結論になっていませんか。"],
       nextStep: "普段お使いの生成AI（職場で利用が認められたもの）に貼り付け、続けて報告の目的とメモを伝えてください。",
     },
+
+    // Excel作業のカード（仮の文面。確定文面を受け取ったら action / prompt / check / nextStep を差し替える）
+    {
+      id: "excel-function",
+      category: "excel",
+      title: "使いたい関数が、分からない",
+      action: "「どの列から、何を求めたいか」を一文にしてみましょう。",
+      prompt:
+        "Excelで使う関数を相談したいです。これから、表の列の構成と、求めたい結果を伝えます。合いそうな関数の候補を2〜3個挙げ、それぞれの使い方と数式の例、向いていない場面を示してください。私の表にない列や条件は推測で補わず、不明な点は質問してください。",
+      check: ["数式の参照範囲が、自分の表の列と合っていますか。", "数行だけで試して、手で計算した結果と一致しますか。"],
+      nextStep: "普段お使いの生成AI（職場で利用が認められたもの）に貼り付け、続けて列の見出し名と、求めたい結果を伝えてください。",
+    },
+    {
+      id: "excel-error",
+      category: "excel",
+      title: "数式のエラーを、解消したい",
+      action: "表示されたエラー（#N/A、#VALUE! など）と、入れた数式をそのまま書き出してみましょう。",
+      prompt:
+        "Excelの数式でエラーが出ています。これから、入力した数式、表示されたエラー、参照しているセルの値の種類（文字・数値・日付など）を伝えます。考えられる原因を可能性の高い順に挙げ、それぞれの確かめ方と直し方を示してください。確かめられない原因は断定せず、私に確認してください。",
+      check: ["原因を1つずつ確かめてから直していますか。", "直した数式が、ほかの行でも正しく動きますか。"],
+      nextStep: "普段お使いの生成AI（職場で利用が認められたもの）に貼り付け、続けて入力した数式と、表示されたエラーを伝えてください。",
+    },
+    {
+      id: "excel-aggregate",
+      category: "excel",
+      title: "集計の進め方に、迷っている",
+      action: "見たい結果を「何ごとに・何を・どう集計するか」（例：月ごとに・件数を・合計）で書いてみましょう。",
+      prompt:
+        "Excelで集計をしたいです。これから、表の列の構成と、見たい集計結果を伝えます。関数を使う方法とピボットテーブルを使う方法のどちらが合うかを理由とともに示し、手順を順番に説明してください。集計の前に整えておくべきデータの形があれば、先に教えてください。",
+      check: ["集計結果の合計が、元の表の合計と一致しますか。", "空欄や重複した行が、集計に影響していませんか。"],
+      nextStep: "普段お使いの生成AI（職場で利用が認められたもの）に貼り付け、続けて列の見出し名と、見たい集計結果を伝えてください。",
+    },
+    {
+      id: "excel-format",
+      category: "excel",
+      title: "表を見やすく、整えたい",
+      action: "「誰が、何を見るための表か」を決めてから、目立たせる列を1つ選んでみましょう。",
+      prompt:
+        "Excelの表を見やすく整えたいです。これから、表の目的、読む人、列の構成を伝えます。列の並び、書式（罫線・色・数値の表示形式）、強調したい箇所の示し方に分けて改善案を示し、Excelでの操作手順を説明してください。データの値そのものは変えない方法を優先してください。",
+      check: ["読む人が最初に見るべき箇所が分かりますか。", "書式を整えたことで、数値の値そのものが変わっていませんか。"],
+      nextStep: "普段お使いの生成AI（職場で利用が認められたもの）に貼り付け、続けて表の目的と読む人、列の見出し名を伝えてください。",
+    },
   ];
 
   const CARD_BY_ID = Object.fromEntries(CARDS.map((c) => [c.id, c]));
+  const cardsIn = (categoryId) => CARDS.filter((c) => c.category === categoryId);
 
   // 表示順：目的 → 問い → 情報整理 → 根拠確認 → 骨子
   const AREAS = [
@@ -347,7 +411,8 @@
   // ---------------------------------------------------------------------------
 
   const state = {
-    view: "home", // home | card | quizIntro | quiz | result | data
+    view: "home", // home | category | card | quizIntro | quiz | result | data | paid
+    categoryId: null,
     cardId: null,
     cardFrom: null, // カードを開いた元の画面（"result" のとき「結果に戻る」を出す）
     quiz: null, // { questionIds, answers, index }
@@ -373,6 +438,7 @@
     return {
       app: "research-guide",
       view: state.view,
+      categoryId: state.categoryId,
       cardId: state.cardId,
       cardFrom: state.cardFrom,
       quizIndex: state.quiz ? state.quiz.index : null,
@@ -386,7 +452,8 @@
       Object.assign(state, { view: "home" });
     } else {
       Object.assign(state, {
-        view: s.view,
+        view: VIEWS[s.view] ? s.view : "home",
+        categoryId: s.categoryId,
         cardId: s.cardId,
         cardFrom: s.cardFrom,
         resultSource: s.resultSource || "current",
@@ -401,6 +468,7 @@
       state.view = "home";
     }
     if (state.view === "card" && !CARD_BY_ID[state.cardId]) state.view = "home";
+    if (state.view === "category" && !CATEGORY_BY_ID[state.categoryId]) state.view = "home";
     Object.assign(state, { showAlternatives: false, confirmDelete: false, quizError: false });
     render();
   });
@@ -515,25 +583,24 @@
     return h(
       "div",
       { class: "view view-home" },
-      h("h1", { class: "page-title", text: "お仕事で、どこに迷っていますか？" }),
-      h("p", { class: "lead", text: "近いものを選ぶと、次に試せる行動と、生成AIに渡せる指示文が表示されます。" }),
+      h("h1", { class: "page-title", text: "今日は、どのお仕事を進めますか？" }),
+      h("p", { class: "lead", text: "お仕事の種類を選ぶと、困りごとごとに、次に試せる行動と生成AIに渡せる指示文が見つかります。" }),
       h(
         "ul",
-        { class: "entry-list", "aria-label": "困りごとの入口" },
-        CARDS.map((card, i) =>
+        { class: "entry-list", "aria-label": "お仕事の種類" },
+        CATEGORIES.map((cat) =>
           h(
             "li",
             null,
             h(
               "button",
-              {
-                type: "button",
-                class: "entry",
-                "data-entry": card.id,
-                onclick: () => openCard(card.id, "home"),
-              },
-              h("span", { class: "entry__num", "aria-hidden": "true", text: String(i + 1) }),
-              h("span", { class: "entry__text", text: card.title }),
+              { type: "button", class: "entry entry--category", "data-category": cat.id, onclick: () => openCategory(cat.id) },
+              h(
+                "span",
+                { class: "entry__text" },
+                h("span", { class: "entry__title", text: cat.title }),
+                h("span", { class: "entry__desc", text: cat.description })
+              ),
               h("span", { class: "entry__arrow", "aria-hidden": "true", text: "→" })
             )
           )
@@ -556,7 +623,12 @@
                   h(
                     "button",
                     { type: "button", class: "fav-item", onclick: () => openCard(card.id, "home") },
-                    h("span", { text: card.title }),
+                    h(
+                      "span",
+                      { class: "fav-item__body" },
+                      h("span", { class: "fav-item__category", text: CATEGORY_BY_ID[card.category].title }),
+                      h("span", { text: card.title })
+                    ),
                     p ? h("span", { class: "tag", text: "試してみた" }) : null
                   )
                 );
@@ -573,29 +645,87 @@
       ),
 
       h(
-        "section",
-        { class: "section section--sub", "aria-labelledby": "check-heading" },
-        h("h2", { id: "check-heading", class: "h-sub", text: "どこから始めるか迷ったら、5問のチェック" }),
-        h("p", {
-          class: "small",
-          text: "最近の調べものや報告書づくりを振り返る、短い自己チェックです。1〜2分で終わります。",
-        }),
-        h(
-          "div",
-          { class: "btn-row" },
-          button("5問のチェックを始める", () => navigate("quizIntro"), { class: "btn btn--secondary" }),
-          store.data.latestResult
-            ? button("保存した結果を見る", () => navigate("result", { resultSource: "saved" }), {
-                class: "btn btn--ghost",
-              })
-            : null
-        )
+        "p",
+        { class: "section small" },
+        button("有料でできること（準備中）", () => navigate("paid"), { class: "link-button", "data-paid": "" })
       )
     );
   }
 
+  function openCategory(categoryId) {
+    navigate("category", { categoryId });
+  }
+
+  function viewCategory() {
+    const cat = CATEGORY_BY_ID[state.categoryId];
+    return h(
+      "div",
+      { class: "view view-category" },
+      h("nav", { class: "crumbs", "aria-label": "戻る" }, button("← トップに戻る", () => navigate("home"), { class: "link-button" })),
+      h("p", { class: "card-kicker", text: cat.title }),
+      h("h1", { class: "page-title", text: cat.question }),
+      h("p", { class: "lead", text: "近いものを選ぶと、次に試せる行動と、生成AIに渡せる指示文が表示されます。" }),
+      h(
+        "ul",
+        { class: "entry-list", "aria-label": "困りごとの入口" },
+        cardsIn(cat.id).map((card, i) =>
+          h(
+            "li",
+            null,
+            h(
+              "button",
+              { type: "button", class: "entry", "data-entry": card.id, onclick: () => openCard(card.id, "category") },
+              h("span", { class: "entry__num", "aria-hidden": "true", text: String(i + 1) }),
+              h("span", { class: "entry__text", text: card.title }),
+              h("span", { class: "entry__arrow", "aria-hidden": "true", text: "→" })
+            )
+          )
+        )
+      ),
+
+      // 5問の自己チェックは「情報収集・報告書づくり」だけに置く
+      cat.id === "research"
+        ? h(
+            "section",
+            { class: "section section--sub", "aria-labelledby": "check-heading" },
+            h("h2", { id: "check-heading", class: "h-sub", text: "どこから始めるか迷ったら、5問のチェック" }),
+            h("p", {
+              class: "small",
+              text: "最近の調べものや報告書づくりを振り返る、短い自己チェックです。1〜2分で終わります。",
+            }),
+            h(
+              "div",
+              { class: "btn-row" },
+              button("5問のチェックを始める", () => navigate("quizIntro"), { class: "btn btn--secondary" }),
+              store.data.latestResult
+                ? button("保存した結果を見る", () => navigate("result", { resultSource: "saved" }), {
+                    class: "btn btn--ghost",
+                  })
+                : null
+            )
+          )
+        : null
+    );
+  }
+
   function openCard(cardId, from) {
-    navigate("card", { cardId, cardFrom: from });
+    navigate("card", { cardId, cardFrom: from, categoryId: CARD_BY_ID[cardId].category });
+  }
+
+  // トップと所属カテゴリの両方へ戻れるパンくず
+  function crumbs(categoryId, extra) {
+    const cat = CATEGORY_BY_ID[categoryId];
+    return h(
+      "nav",
+      { class: "crumbs", "aria-label": "現在の場所" },
+      h(
+        "ol",
+        { class: "crumbs__list" },
+        h("li", null, button("トップ", () => navigate("home"), { class: "link-button" })),
+        h("li", null, button(cat.title, () => openCategory(cat.id), { class: "link-button", "data-crumb-category": "" }))
+      ),
+      extra || null
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -667,14 +797,11 @@
     return h(
       "div",
       { class: "view view-card" },
-      h(
-        "nav",
-        { class: "crumbs", "aria-label": "戻る" },
-        state.cardFrom === "result"
-          ? button("← 結果に戻る", () => history.back(), { class: "link-button" })
-          : button("← トップに戻る", () => navigate("home"), { class: "link-button" })
+      crumbs(
+        card.category,
+        state.cardFrom === "result" ? button("← 結果に戻る", () => history.back(), { class: "link-button" }) : null
       ),
-      h("p", { class: "card-kicker", text: "困りごと" }),
+      h("p", { class: "card-kicker", text: CATEGORY_BY_ID[card.category].title + "の困りごと" }),
       h("h1", { class: "page-title page-title--card", text: card.title }),
 
       h(
@@ -722,8 +849,8 @@
         practice ? feedbackFieldset(card.id, practice, onFeedback, toggleAlternatives) : null
       ),
 
-      state.showAlternatives ? alternatives(card.id) : null,
-      usageGuide()
+      state.showAlternatives ? alternatives(card) : null,
+      usageGuide(card)
     );
   }
 
@@ -778,7 +905,7 @@
     );
   }
 
-  function alternatives(currentId) {
+  function alternatives(current) {
     return h(
       "section",
       { class: "section alt", "aria-labelledby": "alt-heading" },
@@ -786,23 +913,32 @@
       h(
         "ul",
         { class: "fav-list" },
-        CARDS.filter((c) => c.id !== currentId).map((c) =>
-          h("li", null, h("button", { type: "button", class: "fav-item", onclick: () => openCard(c.id, "home") }, c.title))
-        ),
-        h(
-          "li",
-          null,
-          h(
-            "button",
-            { type: "button", class: "fav-item", onclick: () => navigate("quizIntro") },
-            "どこから始めるか迷ったら、5問のチェック"
-          )
-        )
+        cardsIn(current.category)
+          .filter((c) => c.id !== current.id)
+          .map((c) =>
+            h("li", null, h("button", { type: "button", class: "fav-item", onclick: () => openCard(c.id, "category") }, c.title))
+          ),
+        current.category === "research"
+          ? h(
+              "li",
+              null,
+              h(
+                "button",
+                { type: "button", class: "fav-item", onclick: () => navigate("quizIntro") },
+                "どこから始めるか迷ったら、5問のチェック"
+              )
+            )
+          : null
+      ),
+      h(
+        "div",
+        { class: "btn-row" },
+        button("ほかのお仕事の種類を見る（トップへ）", () => navigate("home"), { class: "btn btn--ghost btn--small" })
       )
     );
   }
 
-  function usageGuide() {
+  function usageGuide(card) {
     return h(
       "aside",
       { class: "usage", "aria-labelledby": "usage-heading" },
@@ -814,7 +950,10 @@
         h("li", { text: "コピーした指示文は、職場で利用が認められた生成AIに貼り付けて使ってください。" }),
         h("li", {
           text: "指示文に続けて情報を追記するときは、利用先のサービスと職場のルールに従ってください。個人情報や社外秘の情報は追記しないでください。",
-        })
+        }),
+        card.category === "excel"
+          ? h("li", { text: "表の中身（顧客名や金額などの実データ）は貼り付けず、列の見出し名や架空の例で伝えてください。" })
+          : null
       )
     );
   }
@@ -827,7 +966,7 @@
     return h(
       "div",
       { class: "view view-quiz-intro" },
-      h("nav", { class: "crumbs", "aria-label": "戻る" }, button("← トップに戻る", () => navigate("home"), { class: "link-button" })),
+      crumbs("research"),
       h("h1", { class: "page-title", text: "5問のチェック" }),
       h("p", {
         class: "lead",
@@ -942,7 +1081,7 @@
           { class: "btn-row btn-row--quiz" },
           quiz.index > 0
             ? button("← 前の質問", back, { class: "btn btn--ghost" })
-            : button("← やめる", () => navigate("home"), { class: "btn btn--ghost" }),
+            : button("← やめる", () => openCategory("research"), { class: "btn btn--ghost" }),
           h("button", { type: "submit", class: "btn btn--primary" }, isLast ? "結果を見る" : "次へ →")
         )
       ),
@@ -1029,7 +1168,9 @@
           h(
             "ul",
             { class: "fav-list" },
-            CARDS.map((c) => h("li", null, h("button", { type: "button", class: "fav-item", onclick: () => openCard(c.id, "result") }, c.title)))
+            cardsIn("research").map((c) =>
+              h("li", null, h("button", { type: "button", class: "fav-item", onclick: () => openCard(c.id, "result") }, c.title))
+            )
           )
         )
       );
@@ -1075,7 +1216,7 @@
           ? button("保存した結果を削除", () => {
               store.deleteResult();
               announce("保存した結果を削除しました。");
-              navigate("home");
+              openCategory("research");
             }, { class: "btn btn--ghost" })
           : savedNow
             ? h("p", { class: "small", "data-save-status": "", tabindex: "-1", text: "この結果はブラウザー内に保存済みです。" })
@@ -1084,6 +1225,7 @@
                 "data-save-status": "",
               }),
         button("もう一度チェックする", startQuiz, { class: "btn btn--ghost" }),
+        button("「情報収集・報告書づくり」に戻る", () => openCategory("research"), { class: "btn btn--ghost" }),
         button("トップに戻る", () => navigate("home"), { class: "btn btn--ghost" })
       ),
       !saved ? h("p", { class: "small muted", text: "保存しない場合、この結果はページを閉じると消えます。保存できるのは最新の1件だけです。" }) : null
@@ -1185,8 +1327,84 @@
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // 画面：有料でできること（準備中）
+  // 見本の紹介だけ。購入・会員登録・アンロックは実装しない。価格や提供時期は記載しない。
+  // ---------------------------------------------------------------------------
+
+  function viewPaid() {
+    const rows = [
+      ["使える範囲", "アプリ内の無料機能を、今すぐすべて使えます", "準備中のため、まだ使えません"],
+      ["カテゴリ", "情報収集・報告書づくり／Excel作業", "追加カテゴリを構想中"],
+      ["作業ガイド", "困りごとごとの実用カード（共通の内容）", "選んだ条件に合わせた作業ガイドを構想中"],
+    ];
+    return h(
+      "div",
+      { class: "view view-paid" },
+      h("nav", { class: "crumbs", "aria-label": "戻る" }, button("← トップに戻る", () => navigate("home"), { class: "link-button" })),
+      h("p", { class: "card-kicker", text: "準備中の構想" }),
+      h("h1", { class: "page-title", text: "有料でできること（準備中）" }),
+      h(
+        "p",
+        { class: "notice notice--info" },
+        "このページは構想の紹介です。現在、有料機能の購入や会員登録はできません。価格や提供時期は、まだご案内していません。"
+      ),
+      h(
+        "section",
+        { class: "section" },
+        h("h2", { class: "h-sub", text: "構想1：条件に合わせた作業ガイド" }),
+        h("p", {
+          text:
+            "報告の種類や頻度、Excelでの作業の種類などを選択肢から選ぶと、その条件に合わせた手順と指示文の組み合わせを案内する構想です。無料版のカードは、どなたにも同じ内容を表示します。",
+        })
+      ),
+      h(
+        "section",
+        { class: "section" },
+        h("h2", { class: "h-sub", text: "構想2：追加カテゴリ" }),
+        h("p", {
+          text: "「情報収集・報告書づくり」「Excel作業」以外のお仕事についても、カテゴリを増やす構想です。どのカテゴリを追加するかは検討中です。",
+        })
+      ),
+      h(
+        "section",
+        { class: "section" },
+        h("h2", { class: "h-sub", text: "無料で使える機能との違い" }),
+        h(
+          "div",
+          { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "無料版と有料版（構想）の比較" },
+          h(
+            "table",
+            { class: "compare" },
+            h(
+              "thead",
+              null,
+              h("tr", null, h("th", { scope: "col", text: "項目" }), h("th", { scope: "col", text: "無料（今すぐ使える）" }), h("th", { scope: "col", text: "有料（準備中・構想）" }))
+            ),
+            h(
+              "tbody",
+              null,
+              rows.map(([a, b, c]) => h("tr", null, h("th", { scope: "row", text: a }), h("td", { text: b }), h("td", { text: c })))
+            )
+          )
+        ),
+        h("p", {
+          class: "small muted",
+          text: "有料版の内容は構想段階で、今後の検討で変わることがあります。",
+        })
+      ),
+      h(
+        "div",
+        { class: "btn-row" },
+        button("無料のカードを使う（トップへ）", () => navigate("home"), { class: "btn btn--secondary" })
+      )
+    );
+  }
+
   const VIEWS = {
     home: viewHome,
+    category: viewCategory,
+    paid: viewPaid,
     card: viewCard,
     quizIntro: viewQuizIntro,
     quiz: viewQuiz,
