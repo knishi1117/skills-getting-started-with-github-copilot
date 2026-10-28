@@ -94,6 +94,15 @@ async function storedData(page) {
       await page.getByRole("heading", { name: "どこから始めるか迷ったら、5問のチェック" }).waitFor();
     });
 
+    await step("アプリ名・試作版表示・送信しない旨の説明", async () => {
+      assert.strictEqual(await page.title(), "お仕事の進め方ガイド（試作版）");
+      assert.strictEqual((await page.locator(".site-title").textContent()).trim(), "お仕事の進め方ガイド");
+      await page.locator(".badge-trial", { hasText: "試作版" }).waitFor();
+      await page.getByText("診断の回答や実践記録はサーバーへ送信しません。", { exact: false }).first().waitFor();
+      const all = await page.evaluate(() => document.documentElement.outerHTML);
+      assert.ok(!/個人情報を(一切)?扱(わ|い)ない/.test(all), "包括的な個人情報の表示をしない");
+    });
+
     await step("入力欄（ラジオ以外）がない", async () => {
       for (const sel of ["input:not([type=radio])", "textarea", "select", "[contenteditable]"]) {
         assert.strictEqual(await page.locator(sel).count(), 0, sel);
@@ -196,7 +205,7 @@ async function storedData(page) {
 
     await step("再読み込み後もお気に入りがトップに表示される", async () => {
       await page.reload();
-      await page.getByRole("button", { name: "調査・報告の進め方ガイド" }).click();
+      await page.getByRole("button", { name: "お仕事の進め方ガイド" }).click();
       const favs = await page.locator(".fav-list .fav-item").allTextContents();
       assert.strictEqual(favs.length, 1);
       assert.ok(favs[0].includes("情報が多くて、整理できない"));
@@ -230,7 +239,7 @@ async function storedData(page) {
     await step("2カテゴリ・計8カードへ、トップ→カテゴリ→困りごと→カードで移動できる", async () => {
       for (const cat of ["research", "excel"]) {
         for (let i = 0; i < 4; i++) {
-          await page.getByRole("button", { name: "調査・報告の進め方ガイド" }).click();
+          await page.getByRole("button", { name: "お仕事の進め方ガイド" }).click();
           await openCategory(page, cat);
           const entries = await page.locator(".entry__text").allTextContents();
           assert.deepStrictEqual(entries, EXPECTED[cat]);
@@ -657,7 +666,7 @@ async function storedData(page) {
     await page.getByRole("button", { name: "有料でできること（準備中）" }).tap();
     assert.ok(await noOverflow());
     if (SHOT_DIR) await page.screenshot({ path: path.join(SHOT_DIR, "mobile-paid.png"), fullPage: true });
-    await page.getByRole("button", { name: "調査・報告の進め方ガイド" }).tap();
+    await page.getByRole("button", { name: "お仕事の進め方ガイド" }).tap();
     await page.locator('[data-category="research"]').tap();
     await page.getByRole("button", { name: /調べたいことが/ }).tap();
     assert.ok(await noOverflow());
@@ -690,7 +699,7 @@ async function storedData(page) {
     await page.getByLabel("役立った").check();
     await page.getByRole("button", { name: "トップ", exact: true }).click();
     await page.getByRole("button", { name: "有料でできること（準備中）" }).click();
-    await page.getByRole("button", { name: "調査・報告の進め方ガイド" }).click();
+    await page.getByRole("button", { name: "お仕事の進め方ガイド" }).click();
     await openCategory(page, "research");
     await page.getByRole("button", { name: "5問のチェックを始める" }).click();
     await answerQuiz(page, ["notyet", "sometimes", "none", "always", "notyet"]);
