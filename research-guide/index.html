@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 外向き通信を防ぐため、同一オリジンの静的ファイル以外の読み込みと通信を禁止する -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; font-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>お仕事の進め方ガイド（試作版）</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">本文へ移動</a>
+    <header class="site-header">
+      <div class="site-header__inner">
+        <button type="button" class="site-title" data-action="home">
+          お仕事の進め方ガイド
+        </button>
+        <span class="badge-trial">試作版</span>
+      </div>
+    </header>
+
+    <div id="storage-notice" class="notice notice--warn" role="status" hidden></div>
+
+    <main id="main" tabindex="-1">
+      <noscript>
+        <p class="notice notice--warn">このアプリの表示には JavaScript を有効にしてください。</p>
+      </noscript>
+    </main>
+
+    <!-- 操作結果（コピー完了・保存失敗など）を読み上げるための領域 -->
+    <div id="live" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+
+    <footer class="site-footer">
+      <p>
+        生成AIとの連携、登録、ログインはありません。診断の回答や実践記録はサーバーへ送信しません。お気に入りや記録は、このブラウザー内にだけ保存されます。
+      </p>
+      <button type="button" class="link-button" data-action="data">
+        端末内の記録について・まとめて削除
+      </button>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
