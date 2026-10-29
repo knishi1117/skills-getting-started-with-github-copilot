@@ -269,7 +269,13 @@ async function storedData(page) {
       await page.getByRole("button", { name: "指示文をコピー" }).click();
       await page.getByText("指示文をコピーしました。").waitFor();
       assert.strictEqual(await page.evaluate(() => navigator.clipboard.readText()), expected);
-      await page.getByText("列の見出し名や架空の例で伝えてください", { exact: false }).waitFor();
+      assert.ok(expected.startsWith("Excelの数式エラーについて相談します。"));
+      assert.ok(expected.endsWith("情報が足りなければ、原因を断定せず追加で質問してください。"));
+      await page
+        .getByText("次に：普段お使いの生成AIに貼り付け、エラー表示と期待する結果を伝えてください。数式を共有する場合は、機密情報を含まない架空の例に置き換えましょう。")
+        .waitFor();
+      await page.getByText("提案された操作や数式は、元のファイルのコピーで試し、結果を確認してから反映しましょう。").waitFor();
+      await page.getByText("このアプリに、ファイルや実データを入力する必要はありません。").waitFor();
       await page.getByRole("button", { name: "ほかの困りごとを見る" }).click();
       const alts = await page.locator(".alt .fav-item").allTextContents();
       assert.deepStrictEqual(alts, ["使いたい関数が、分からない", "集計の進め方に、迷っている", "表を見やすく、整えたい"]);
