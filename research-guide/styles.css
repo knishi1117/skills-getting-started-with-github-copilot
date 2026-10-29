@@ -771,3 +771,8 @@ progress {
 .compare tbody th {
   white-space: nowrap;
 }
+
+/* お気に入り一覧と、その下の注意書きの間をあける */
+.fav-list + .small {
+  margin-top: 16px;
+}
