@@ -36,6 +36,7 @@ async function newPage(browser, opts = {}) {
   context.on("request", (r) => requests.push(r.url()));
   if (opts.init) await context.addInitScript(opts.init);
   const page = await context.newPage();
+  if (opts.clock) await page.clock.install({ time: new Date(opts.clock) });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
@@ -177,7 +178,7 @@ async function storedData(page) {
       const btn = page.getByRole("button", { name: "★ お気に入りを解除" });
       assert.strictEqual(await btn.getAttribute("aria-pressed"), "true");
       const d = await storedData(page);
-      assert.strictEqual(d.schemaVersion, 2);
+      assert.strictEqual(d.schemaVersion, 3);
       assert.deepStrictEqual(d.favorites, ["organize"]);
     });
 
@@ -724,6 +725,300 @@ async function storedData(page) {
     await context.close();
   });
 
+  // --- お仕事の木 -----------------------------------------------------------
+  const TOKYO = { timezoneId: "Asia/Tokyo" };
+  const treeOf = async (page) => ((await storedData(page)) || { tree: { lastWatered: null, practiced: [], reviewed: [] } }).tree;
+  const stageText = async (page) => (await page.locator("[data-tree-stage]").textContent()).replace("いまの姿：", "");
+  const goHome = (page) => page.getByRole("button", { name: "お仕事の進め方ガイド" }).click();
+
+  await step("お仕事の木：カテゴリ選択の下に苗木で表示し、説明文がある", async () => {
+    const { context, page } = await newPage(browser);
+    const card = page.locator(".tree-card");
+    await card.getByRole("heading", { name: "あなたのお仕事の木" }).waitFor();
+    await card.getByText("小さな実践を、少しずつ育てていきましょう。").waitFor();
+    assert.strictEqual(await stageText(page), "苗木");
+    // カテゴリ選択より後ろに配置
+    const order = await page.evaluate(() => {
+      const cat = document.querySelector("[data-category='excel']");
+      const tree = document.querySelector(".tree-card");
+      return !!(cat.compareDocumentPosition(tree) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    assert.ok(order);
+    // 成長記録は折りたたみ
+    assert.strictEqual(await page.locator(".tree-log").getAttribute("open"), null);
+    await page.locator(".tree-log summary").click();
+    await page.getByText("能力の評価ではありません。", { exact: false }).first().waitFor();
+    const text = await card.textContent();
+    for (const ng of ["ログイン", "連続", "ボーナス", "ランキング", "枯れ", "正解", "能力が上が", "スキル", "取り逃"]) {
+      assert.ok(!text.includes(ng), "使わない表現: " + ng);
+    }
+    await context.close();
+  });
+
+  await step("水やり：1日1回、木の姿は変わらず、ローカル日付で翌日また水やりできる", async () => {
+    // 日本時間 0:30（UTC では前日）→ 端末のローカル日付で記録する
+    const { context, page } = await newPage(browser, { context: TOKYO, clock: "2026-11-04T00:30:00+09:00" });
+    await page.locator("[data-water]").dblclick();
+    await page.locator("[data-water-message]", { hasText: "今日も、あなたのペースで。" }).waitFor();
+    assert.strictEqual(await page.locator(".tree-drop").count(), 1, "水滴を表示");
+    assert.strictEqual(await page.locator("[data-water]").count(), 0, "同じ日は再表示しない");
+    assert.strictEqual((await treeOf(page)).lastWatered, "2026-11-04");
+    assert.strictEqual(await stageText(page), "苗木", "水やりだけでは成長しない");
+    await page.reload();
+    assert.strictEqual(await page.locator("[data-water]").count(), 0, "再読み込みでも同じ日は1回");
+    await page.clock.setSystemTime(new Date("2026-11-04T23:59:00+09:00"));
+    await page.reload();
+    assert.strictEqual(await page.locator("[data-water]").count(), 0);
+    await page.clock.setSystemTime(new Date("2026-11-05T00:01:00+09:00"));
+    await page.reload();
+    await page.locator("[data-water]").click();
+    assert.strictEqual((await treeOf(page)).lastWatered, "2026-11-05");
+    assert.strictEqual(await stageText(page), "苗木");
+    await context.close();
+  });
+
+  await step("実践：「試してみた」で葉が増え、同じガイドは1日1回、取り消しも反映、水やりなしでも記録できる", async () => {
+    const { context, page } = await newPage(browser, { context: TOKYO, clock: "2026-11-03T10:00:00+09:00" });
+    await openGuide(page, "research", "調べたいことが、うまくまとまらない");
+    await page.getByRole("button", { name: "試してみた", exact: true }).click();
+    let t = await treeOf(page);
+    assert.deepStrictEqual(t.practiced, [{ date: "2026-11-03", id: "scope" }]);
+    assert.strictEqual(t.lastWatered, null);
+    // 押すと今日の分を取り消し、もう一度押すと記録（連打しても重複しない）
+    await page.locator("[data-tried]").click();
+    assert.deepStrictEqual((await treeOf(page)).practiced, []);
+    assert.strictEqual((await storedData(page)).practice.scope, undefined, "取り消しで実践記録も外す");
+    await page.locator("[data-tried]").click();
+    await page.locator("[data-tried]").dblclick();
+    await page.locator("[data-tried]").click();
+    t = await treeOf(page);
+    assert.ok(t.practiced.length <= 1, "連打で増えない");
+    if (!t.practiced.length) await page.locator("[data-tried]").click();
+    assert.deepStrictEqual((await treeOf(page)).practiced, [{ date: "2026-11-03", id: "scope" }]);
+    // 完了しても同じ日・同じガイドは増えない
+    await toStep(page, 6);
+    await page.getByRole("button", { name: "このガイドを完了する" }).click();
+    await page.reload();
+    assert.strictEqual((await treeOf(page)).practiced.length, 1);
+    // 同じ日に別のガイド → 葉は2枚、日数は1日
+    await openGuide(page, "excel", "使いたい関数が、分からない");
+    await page.getByRole("button", { name: "試してみた", exact: true }).click();
+    await goHome(page);
+    await page.locator("[data-tree-days]", { hasText: "これまで1日、お仕事で試しました" }).waitFor();
+    assert.strictEqual(await stageText(page), "小さな木");
+    assert.strictEqual(await page.locator(".tree-leaf").count(), 2);
+    // 翌日：同じガイドをもう一度 → 2日
+    await page.clock.setSystemTime(new Date("2026-11-04T09:00:00+09:00"));
+    await page.reload();
+    await openGuide(page, "research", "調べたいことが、うまくまとまらない");
+    await page.getByRole("button", { name: "今日も試してみた" }).click();
+    await goHome(page);
+    await page.locator("[data-tree-days]", { hasText: "これまで2日、お仕事で試しました" }).waitFor();
+    // 翌日分だけ取り消す → 前日の記録は残る
+    await openGuide(page, "research", "調べたいことが、うまくまとまらない");
+    await page.locator("[data-tried]").click();
+    t = await treeOf(page);
+    assert.deepStrictEqual(t.practiced.filter((e) => e.id === "scope"), [{ date: "2026-11-03", id: "scope" }]);
+    assert.ok((await storedData(page)).practice.scope, "前日の実践があるので記録は残る");
+    await context.close();
+  });
+
+  await step("見直し：「確認ポイントを見直した」で花が増え、同じガイドは1日1回", async () => {
+    const { context, page } = await newPage(browser, { context: TOKYO, clock: "2026-11-03T10:00:00+09:00" });
+    await openGuide(page, "excel", "集計の進め方に、迷っている");
+    await toStep(page, 4);
+    await page.locator("[data-review]").click();
+    await page.locator("[data-review-done]").waitFor();
+    assert.ok(!(await page.locator("[data-review-done]").textContent()).includes("正解"));
+    assert.strictEqual(await page.locator("[data-review]").count(), 0);
+    await page.reload();
+    await page.locator("[data-resume]").click();
+    await toStep(page, 4);
+    assert.strictEqual(await page.locator("[data-review]").count(), 0, "再読み込みでも同じ日は1回");
+    assert.strictEqual((await treeOf(page)).reviewed.length, 1);
+    await goHome(page);
+    await page.locator("[data-tree-reviews]", { hasText: "1回、確認ポイントを見直しました" }).waitFor();
+    assert.strictEqual(await page.locator(".tree-flower").count(), 1);
+    assert.strictEqual(await stageText(page), "苗木", "見直しだけでは成長段階は進まない");
+    await page.clock.setSystemTime(new Date("2026-11-04T09:00:00+09:00"));
+    await page.reload();
+    await page.locator("[data-resume]").click();
+    await toStep(page, 4);
+    await page.locator("[data-review]").click();
+    assert.strictEqual((await treeOf(page)).reviewed.length, 2);
+    await context.close();
+  });
+
+  await step("成長段階：試した日数で変わり、描く数には上限、休んでも失われない", async () => {
+    const { context, page } = await newPage(browser, { context: TOKYO, clock: "2027-03-01T09:00:00+09:00" });
+    const ids = ["scope", "organize", "refine", "outline"];
+    const seed = async (days, perDay, reviews) => {
+      const practiced = [];
+      for (let i = 0; i < days; i++) for (let j = 0; j < perDay; j++) practiced.push({ date: `2026-10-${String(i + 1).padStart(2, "0")}`, id: ids[j] });
+      const reviewed = [];
+      for (let i = 0; i < reviews; i++) reviewed.push({ date: `2026-10-${String(i + 1).padStart(2, "0")}`, id: "outline" });
+      await page.evaluate(
+        ([k, tree]) => localStorage.setItem(k, JSON.stringify({ schemaVersion: 3, favorites: [], practice: {}, latestResult: null, progress: {}, seq: 0, tree })),
+        [KEY, { lastWatered: "2026-10-01", practiced, reviewed }]
+      );
+      await page.reload();
+    };
+    for (const [days, name] of [[0, "苗木"], [1, "小さな木"], [2, "小さな木"], [3, "枝が伸びた木"], [6, "枝が伸びた木"], [7, "葉が広がった木"], [30, "葉が広がった木"]]) {
+      await seed(days, 2, 0); // 同じ日に2つのガイド → 日数は days のまま
+      assert.strictEqual(await stageText(page), name, days + "日");
+      if (days) await page.locator("[data-tree-days]", { hasText: "これまで" + days + "日、お仕事で試しました" }).waitFor();
+    }
+    await seed(9, 2, 8);
+    assert.strictEqual(await page.locator(".tree-leaf").count(), 12, "葉の描画は12枚まで");
+    assert.strictEqual(await page.locator(".tree-flower").count(), 6, "花の描画は6輪まで");
+    await page.locator(".tree-log summary").click();
+    await page.getByText("葉：18枚", { exact: false }).waitFor();
+    await page.getByText("花：8輪", { exact: false }).waitFor();
+    // 4か月後でも（休んでも）成長は失われず、警告もない
+    assert.strictEqual(await stageText(page), "葉が広がった木");
+    const text = await page.locator(".tree-card").textContent();
+    assert.ok(!/枯|休ん|途切|警告|失/.test(text));
+    await context.close();
+  });
+
+  await step("既存の保存データ（日付なしの実践記録）を壊さず、日付を推測しない", async () => {
+    const { context, page, errors } = await newPage(browser, { context: TOKYO, clock: "2026-11-03T10:00:00+09:00" });
+    await page.evaluate((k) => {
+      localStorage.setItem(
+        k,
+        JSON.stringify({
+          schemaVersion: 2,
+          favorites: ["organize"],
+          practice: { organize: { tried: true, feedback: "helpful" } },
+          latestResult: null,
+          progress: { outline: { step: 3, sel: { purpose: "proposal" }, issue: null, checks: [], touched: 2 } },
+          seq: 2,
+        })
+      );
+    }, KEY);
+    await page.reload();
+    assert.strictEqual(await stageText(page), "苗木", "日付のない記録は木に数えない");
+    assert.ok((await page.locator(".fav-list .fav-item").textContent()).includes("試してみた"));
+    assert.ok((await page.locator(".resume").textContent()).includes("報告書の流れが、決まらない"));
+    await openGuide(page, "research", "情報が多くて、整理できない");
+    assert.ok(await page.getByLabel("役立った").isChecked(), "感想を保持");
+    await page.getByRole("button", { name: "今日も試してみた" }).click();
+    let d = await storedData(page);
+    assert.strictEqual(d.schemaVersion, 3);
+    assert.deepStrictEqual(d.tree.practiced, [{ date: "2026-11-03", id: "organize" }]);
+    await page.locator("[data-tried]").click(); // 今日の分を取り消し
+    d = await storedData(page);
+    assert.deepStrictEqual(d.tree.practiced, []);
+    assert.deepStrictEqual(d.practice.organize, { tried: true, feedback: "helpful", undated: true }, "以前の記録は残す");
+    assert.deepStrictEqual(errors, []);
+    await context.close();
+  });
+
+  await step("壊れた木の記録は無視して読み込む", async () => {
+    const { context, page, errors } = await newPage(browser, { context: TOKYO, clock: "2026-11-03T10:00:00+09:00" });
+    await page.evaluate((k) => {
+      localStorage.setItem(
+        k,
+        JSON.stringify({
+          schemaVersion: 3,
+          favorites: [],
+          practice: {},
+          latestResult: null,
+          progress: {},
+          seq: 0,
+          tree: {
+            lastWatered: "2026-11-03x",
+            practiced: [
+              { date: "2026-11-01", id: "scope" },
+              { date: "2026-11-01", id: "scope" },
+              { date: "2026-02-30", id: "scope" },
+              { date: "2026-11-02", id: "unknown" },
+              "x",
+            ],
+            reviewed: "oops",
+          },
+        })
+      );
+    }, KEY);
+    await page.reload();
+    assert.strictEqual(await stageText(page), "小さな木");
+    await page.locator("[data-tree-days]", { hasText: "これまで1日" }).waitFor();
+    assert.strictEqual(await page.locator("[data-water]").count(), 1);
+    assert.deepStrictEqual(errors, []);
+    await context.close();
+  });
+
+  await step("まとめて削除で、木の記録も消えて苗木に戻る", async () => {
+    const { context, page } = await newPage(browser, { context: TOKYO, clock: "2026-11-03T10:00:00+09:00" });
+    await page.locator("[data-water]").click();
+    await openGuide(page, "excel", "表を見やすく、整えたい");
+    await page.getByRole("button", { name: "試してみた", exact: true }).click();
+    await toStep(page, 4);
+    await page.locator("[data-review]").click();
+    await page.getByRole("button", { name: "端末内の記録について・まとめて削除" }).click();
+    await page.locator("[data-tree-note]", { hasText: "成長は、この端末で記録した実践を表しています。" }).waitFor();
+    await page.getByRole("button", { name: "端末内の記録をすべて削除" }).click();
+    await page.getByRole("button", { name: "すべて削除する" }).click();
+    assert.strictEqual(await page.evaluate((k) => localStorage.getItem(k), KEY), null);
+    await goHome(page);
+    assert.strictEqual(await stageText(page), "苗木");
+    assert.strictEqual(await page.locator("[data-water]").count(), 1);
+    assert.strictEqual(await page.locator(".tree-flower").count(), 0);
+    await context.close();
+  });
+
+  await step("保存できない環境でも、水やり・試してみた・見直しで止まらない", async () => {
+    const { context, page, errors } = await newPage(browser, {
+      init: () => {
+        Storage.prototype.getItem = () => {
+          throw new Error("SecurityError");
+        };
+        Storage.prototype.setItem = () => {
+          throw new Error("SecurityError");
+        };
+      },
+    });
+    await page.locator("[data-water]").click();
+    await page.locator("[data-water-message]").waitFor();
+    await openGuide(page, "research", "AIの回答が、しっくりこない");
+    await page.getByRole("button", { name: "試してみた", exact: true }).click();
+    await toStep(page, 4);
+    await page.locator("[data-review]").click();
+    await goHome(page);
+    assert.strictEqual(await stageText(page), "小さな木");
+    assert.deepStrictEqual(errors, []);
+    await context.close();
+  });
+
+  await step("お仕事の木：キーボードで水やりと記録の開閉、スマートフォンでカテゴリを押し下げない", async () => {
+    const { context, page } = await newPage(browser);
+    const focused = () => page.evaluate(() => (document.activeElement ? document.activeElement.textContent.trim() : ""));
+    async function tabTo(re, max = 40) {
+      for (let i = 0; i < max; i++) {
+        await page.keyboard.press("Tab");
+        if (re.test(await focused())) return;
+      }
+      throw new Error("フォーカスが届かない: " + re);
+    }
+    await tabTo(/^水をあげる$/);
+    await page.keyboard.press("Enter");
+    await page.locator("[data-water-message]").waitFor();
+    await tabTo(/^成長の記録を見る$/);
+    await page.keyboard.press("Enter");
+    assert.notStrictEqual(await page.locator(".tree-log").getAttribute("open"), null);
+    await context.close();
+
+    const m = await newPage(browser, { context: { viewport: { width: 375, height: 740 }, isMobile: true, hasTouch: true } });
+    const top = await m.page.locator("[data-category='excel']").boundingBox();
+    assert.ok(top.y + top.height < 740, "カテゴリ選択は最初の画面に収まる");
+    assert.ok(await m.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    const box = await m.page.locator(".tree-card").boundingBox();
+    assert.ok(box.height < 320, "木のカードは小さく（" + Math.round(box.height) + "px）");
+    await m.page.locator("[data-water]").tap();
+    if (SHOT_DIR) await m.page.screenshot({ path: path.join(SHOT_DIR, "tree-mobile.png"), fullPage: true });
+    await m.context.close();
+  });
+
   // --- 3. 5問の診断 --------------------------------------------------------
   {
     const { context, page, requests, errors } = await newPage(browser);
@@ -1101,7 +1396,11 @@ async function storedData(page) {
 
   await step("ソースに外部通信 API・外部 URL がない", async () => {
     const dir = path.join(__dirname, "..");
-    const src = ["index.html", "app.js", "styles.css"].map((f) => fs.readFileSync(path.join(dir, f), "utf8")).join("\n");
+    const src = ["index.html", "app.js", "styles.css"].map((f) => fs.readFileSync(path.join(dir, f), "utf8"))
+      .join("\n")
+      // SVG 要素を作るための名前空間の識別子（通信は発生しない）は除外する
+      .split("http://www.w3.org/2000/svg")
+      .join("");
     for (const pat of [/fetch\(/, /XMLHttpRequest/, /sendBeacon/, /WebSocket/, /EventSource/, /https?:\/\//, /@import/, /url\(/]) {
       assert.ok(!pat.test(src), "見つかった: " + pat);
     }

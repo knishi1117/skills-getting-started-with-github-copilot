@@ -1072,3 +1072,133 @@ progress {
 .resume__title {
   font-weight: 700;
 }
+
+/* ---------------------------------------------------------------------------
+   お仕事の木（補助的な表示。アニメーションなし）
+   --------------------------------------------------------------------------- */
+:root {
+  --tree-trunk: #3b4a63;
+  --tree-leaf: #2f8f7f;
+  --tree-canopy: #d7efe9;
+  --tree-ground: #e3e9f1;
+  --tree-flower: #ffffff;
+  --tree-flower-ring: #e8a3a3;
+  --tree-flower-center: #d9a400;
+  --tree-drop: #3b82c4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tree-trunk: #a8b6cc;
+    --tree-leaf: #5cc4b0;
+    --tree-canopy: #1d3a35;
+    --tree-ground: #2a313b;
+    --tree-flower: #f4f1ea;
+    --tree-flower-ring: #e8a3a3;
+    --tree-flower-center: #f2c66d;
+    --tree-drop: #7cb7f5;
+  }
+}
+
+.tree-card {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--card-shadow);
+}
+
+.tree-card__body {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.tree-svg {
+  flex: none;
+  width: 84px;
+  height: 84px;
+}
+
+.tree-card__text {
+  min-width: 0;
+}
+
+.tree-card__text h2 {
+  margin-bottom: 2px;
+}
+
+.tree-card__text p {
+  margin: 0 0 4px;
+}
+
+.tree-card__text .btn {
+  margin-top: 4px;
+}
+
+.tree-stage {
+  font-size: 0.9rem;
+}
+
+.tree-water-message {
+  font-size: 0.9rem;
+  color: var(--primary);
+}
+
+.tree-log {
+  margin-top: 8px;
+  font-size: 0.9rem;
+}
+
+.tree-log summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--primary);
+}
+
+.tree-log ul {
+  margin: 4px 0 8px;
+}
+
+.tree-trunk {
+  stroke: var(--tree-trunk);
+  stroke-linecap: round;
+  fill: none;
+}
+
+.tree-leaf {
+  fill: var(--tree-leaf);
+}
+
+.tree-canopy {
+  fill: var(--tree-canopy);
+}
+
+.tree-ground {
+  fill: var(--tree-ground);
+}
+
+.tree-flower {
+  fill: var(--tree-flower);
+  stroke: var(--tree-flower-ring);
+  stroke-width: 1.2;
+}
+
+.tree-flower-center {
+  fill: var(--tree-flower-center);
+}
+
+.tree-drop {
+  fill: var(--tree-drop);
+}
+
+.review-done {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--ok-soft);
+  font-size: 0.9rem;
+}

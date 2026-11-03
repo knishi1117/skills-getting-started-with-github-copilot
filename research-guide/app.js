@@ -1100,12 +1100,49 @@
   // ---------------------------------------------------------------------------
 
   const STORAGE_KEY = "research-report-guide";
-  // 2：ガイドの進み具合（progress）を追加。1 の保存データはそのまま読み込める。
-  const SCHEMA_VERSION = 2;
-  const READABLE_VERSIONS = [1, 2];
+  // 2：ガイドの進み具合（progress）を追加。
+  // 3：お仕事の木（tree）を追加。1・2 の保存データはそのまま読み込める。
+  const SCHEMA_VERSION = 3;
+  const READABLE_VERSIONS = [1, 2, 3];
 
   function emptyData() {
-    return { schemaVersion: SCHEMA_VERSION, favorites: [], practice: {}, latestResult: null, progress: {}, seq: 0 };
+    return { schemaVersion: SCHEMA_VERSION, favorites: [], practice: {}, latestResult: null, progress: {}, seq: 0, tree: emptyTree() };
+  }
+
+  // お仕事の木の記録。日付は端末のローカル日付（YYYY-MM-DD）。
+  // practiced：「試してみた」を押した日とガイド（同じ日・同じガイドは1件）
+  // reviewed：「確認ポイントを見直した」を押した日とガイド（同じ日・同じガイドは1件）
+  function emptyTree() {
+    return { lastWatered: null, practiced: [], reviewed: [] };
+  }
+
+  function isValidDate(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [y, m, d] = value.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+  }
+
+  function sanitizeLog(list) {
+    const seen = new Set();
+    const out = [];
+    (Array.isArray(list) ? list : []).forEach((e) => {
+      if (!e || !isValidDate(e.date) || !CARD_BY_ID[e.id]) return;
+      const key = e.date + "|" + e.id;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ date: e.date, id: e.id });
+    });
+    return out;
+  }
+
+  function sanitizeTree(raw) {
+    const tree = emptyTree();
+    if (!raw || typeof raw !== "object") return tree;
+    tree.lastWatered = isValidDate(raw.lastWatered) ? raw.lastWatered : null;
+    tree.practiced = sanitizeLog(raw.practiced);
+    tree.reviewed = sanitizeLog(raw.reviewed);
+    return tree;
   }
 
   // 保存データを検証し、想定外の値は取り除く。形が壊れていれば null を返す。
@@ -1123,12 +1160,15 @@
           tried: true,
           feedback: FEEDBACK_VALUES.includes(entry.feedback) ? entry.feedback : null,
         };
+        // 日付のない以前の記録。日付は推測せず、お仕事の木には数えない
+        if (entry.undated === true || raw.schemaVersion < 3) data.practice[id].undated = true;
       });
     }
     data.latestResult = sanitizeResult(raw.latestResult);
     data.progress = sanitizeProgress(raw.progress);
     const touched = Object.values(data.progress).map((p) => p.touched);
     data.seq = Math.max(Number.isInteger(raw.seq) && raw.seq > 0 ? raw.seq : 0, 0, ...touched);
+    data.tree = sanitizeTree(raw.tree);
     return data;
   }
 
@@ -1240,10 +1280,48 @@
     practiceOf(id) {
       return this.data.practice[id] || null;
     },
-    setTried(id, tried) {
-      if (tried) this.data.practice[id] = { tried: true, feedback: null };
-      else delete this.data.practice[id];
+    // 「試してみた」：今日の実践を記録する。同じガイドは1日1回まで（再読み込み・連打でも増えない）
+    practicedToday(id) {
+      const today = todayString();
+      return this.data.tree.practiced.some((e) => e.date === today && e.id === id);
+    },
+    recordPractice(id) {
+      if (!this.data.practice[id]) this.data.practice[id] = { tried: true, feedback: null };
+      if (!this.practicedToday(id)) this.data.tree.practiced.push({ date: todayString(), id });
       return this.save();
+    },
+    // 今日の「試してみた」を取り消す。ほかの日の記録も日付のない以前の記録もなければ、感想も含めて外す
+    cancelPractice(id) {
+      const today = todayString();
+      this.data.tree.practiced = this.data.tree.practiced.filter((e) => !(e.date === today && e.id === id));
+      const p = this.data.practice[id];
+      if (p && !p.undated && !this.data.tree.practiced.some((e) => e.id === id)) delete this.data.practice[id];
+      return this.save();
+    },
+    // 「確認ポイントを見直した」：同じガイドは1日1回まで
+    reviewedToday(id) {
+      const today = todayString();
+      return this.data.tree.reviewed.some((e) => e.date === today && e.id === id);
+    },
+    recordReview(id) {
+      if (!this.reviewedToday(id)) this.data.tree.reviewed.push({ date: todayString(), id });
+      return this.save();
+    },
+    // 水やり：1日1回。木の成長段階には影響しない
+    wateredToday() {
+      return this.data.tree.lastWatered === todayString();
+    },
+    water() {
+      this.data.tree.lastWatered = todayString();
+      return this.save();
+    },
+    treeStats() {
+      const t = this.data.tree;
+      return {
+        days: new Set(t.practiced.map((e) => e.date)).size, // 同じ日に複数のガイドを試しても1日
+        leaves: t.practiced.length,
+        reviews: t.reviewed.length,
+      };
     },
     setFeedback(id, feedback) {
       if (!this.data.practice[id]) this.data.practice[id] = { tried: true, feedback: null };
@@ -1560,6 +1638,8 @@
         )
       ),
 
+      treeCard(),
+
       h(
         "section",
         { class: "section", "aria-labelledby": "fav-heading" },
@@ -1601,6 +1681,165 @@
         "p",
         { class: "section small" },
         button("有料でできること（準備中）", () => navigate("paid"), { class: "link-button", "data-paid": "" })
+      )
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // お仕事の木（実践の記録を表す補助的な表示。能力の評価ではない）
+  // ---------------------------------------------------------------------------
+
+  // 試作の演出用ルール。変更しやすいよう定数にまとめる。
+  const TREE_RULES = {
+    // 試した日数（同じ日に複数のガイドを試しても1日）に応じた木の姿
+    stages: [
+      { minDays: 0, name: "苗木", scale: 1 },
+      { minDays: 1, name: "小さな木", scale: 0.68 },
+      { minDays: 3, name: "枝が伸びた木", scale: 0.8 },
+      { minDays: 7, name: "葉が広がった木", scale: 1 },
+    ],
+    maxLeavesDrawn: 12, // これを超えた分は数字で示す
+    maxFlowersDrawn: 6,
+  };
+
+  const TREE_NOTE =
+    "成長は、この端末で記録した実践を表しています。能力の評価ではありません。別端末への同期はなく、ブラウザーのデータを削除すると記録も消えます。";
+
+  function treeStageIndex(days) {
+    let index = 0;
+    TREE_RULES.stages.forEach((st, i) => {
+      if (days >= st.minDays) index = i;
+    });
+    return index;
+  }
+
+  function stageRuleText() {
+    return TREE_RULES.stages
+      .map((st, i) => {
+        const next = TREE_RULES.stages[i + 1];
+        const range = next ? (next.minDays - 1 > st.minDays ? st.minDays + "〜" + (next.minDays - 1) + "日" : st.minDays + "日") : st.minDays + "日以上";
+        return st.name + "（" + range + "）";
+      })
+      .join("、");
+  }
+
+  function svgEl(tag, attrs, ...children) {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    Object.keys(attrs || {}).forEach((k) => el.setAttribute(k, attrs[k]));
+    children.flat(Infinity).forEach((c) => c && el.appendChild(c));
+    return el;
+  }
+
+  // 木の絵（全体を 120×120 で描き、成長段階に応じて部品を足す）
+  const LEAF_SPOTS = [
+    [60, 40, -20], [46, 46, 25], [74, 44, -30], [38, 58, 20], [84, 54, -25], [52, 34, 30],
+    [68, 32, -15], [42, 50, -35], [80, 46, 35], [60, 52, 10], [34, 64, -20], [88, 60, 20],
+  ];
+  const FLOWER_SPOTS = [[50, 42], [70, 40], [40, 56], [82, 52], [60, 32], [56, 56]];
+
+  function treeSvg(stageIndex, leaves, flowers, watered, label) {
+    const stage = TREE_RULES.stages[stageIndex];
+    const parts = [];
+    if (stageIndex === 0) {
+      parts.push(
+        svgEl("path", { class: "tree-trunk", d: "M60 108 L60 88", "stroke-width": "3" }),
+        svgEl("ellipse", { class: "tree-leaf", cx: "54", cy: "88", rx: "6", ry: "3", transform: "rotate(-30 54 88)" }),
+        svgEl("ellipse", { class: "tree-leaf", cx: "66", cy: "86", rx: "6", ry: "3", transform: "rotate(30 66 86)" })
+      );
+    } else {
+      if (stageIndex >= 3) {
+        parts.push(
+          svgEl("circle", { class: "tree-canopy", cx: "60", cy: "46", r: "24" }),
+          svgEl("circle", { class: "tree-canopy", cx: "42", cy: "56", r: "15" }),
+          svgEl("circle", { class: "tree-canopy", cx: "80", cy: "52", r: "15" })
+        );
+      }
+      parts.push(svgEl("path", { class: "tree-trunk", d: "M60 108 L60 50", "stroke-width": "7" }));
+      if (stageIndex >= 2) {
+        parts.push(
+          svgEl("path", { class: "tree-trunk", d: "M60 82 L40 62", "stroke-width": "4" }),
+          svgEl("path", { class: "tree-trunk", d: "M60 74 L82 56", "stroke-width": "4" }),
+          svgEl("path", { class: "tree-trunk", d: "M60 64 L46 48", "stroke-width": "3" }),
+          svgEl("path", { class: "tree-trunk", d: "M60 60 L76 44", "stroke-width": "3" })
+        );
+      }
+      LEAF_SPOTS.slice(0, Math.min(leaves, TREE_RULES.maxLeavesDrawn)).forEach(([x, y, r]) =>
+        parts.push(svgEl("ellipse", { class: "tree-leaf", cx: String(x), cy: String(y), rx: "6", ry: "3.5", transform: "rotate(" + r + " " + x + " " + y + ")" }))
+      );
+    }
+    FLOWER_SPOTS.slice(0, Math.min(flowers, TREE_RULES.maxFlowersDrawn)).forEach(([x, y]) =>
+      parts.push(
+        svgEl("circle", { class: "tree-flower", cx: String(x), cy: String(y), r: "3.6" }),
+        svgEl("circle", { class: "tree-flower-center", cx: String(x), cy: String(y), r: "1.3" })
+      )
+    );
+    const k = stage.scale;
+    return svgEl(
+      "svg",
+      { class: "tree-svg", viewBox: "0 0 120 120", role: "img", "aria-label": label, focusable: "false" },
+      svgEl("ellipse", { class: "tree-ground", cx: "60", cy: "109", rx: "40", ry: "6" }),
+      svgEl("g", { transform: "translate(60 108) scale(" + k + ") translate(-60 -108)" }, parts),
+      watered ? svgEl("path", { class: "tree-drop", d: "M96 82 C92 89 92 93 96 95 C100 93 100 89 96 82 Z" }) : null
+    );
+  }
+
+  function treeCard() {
+    const stats = store.treeStats();
+    const stageIndex = treeStageIndex(stats.days);
+    const stageName = TREE_RULES.stages[stageIndex].name;
+    const watered = store.wateredToday();
+    const leavesDrawn = stageIndex === 0 ? 0 : Math.min(stats.leaves, TREE_RULES.maxLeavesDrawn);
+    const flowersDrawn = Math.min(stats.reviews, TREE_RULES.maxFlowersDrawn);
+    const label =
+      stageName +
+      "の絵" +
+      (leavesDrawn ? "。葉" + leavesDrawn + "枚" : "") +
+      (flowersDrawn ? "、花" + flowersDrawn + "輪" : "") +
+      (watered ? "、水滴" : "");
+
+    function onWater() {
+      store.water();
+      rerender("[data-water-message]");
+      announce("今日も、あなたのペースで。");
+    }
+
+    return h(
+      "section",
+      { class: "tree-card", "aria-labelledby": "tree-heading" },
+      h(
+        "div",
+        { class: "tree-card__body" },
+        treeSvg(stageIndex, stats.leaves, stats.reviews, watered, label),
+        h(
+          "div",
+          { class: "tree-card__text" },
+          h("h2", { id: "tree-heading", class: "h-sub", text: "あなたのお仕事の木" }),
+          h("p", { class: "small muted", text: "小さな実践を、少しずつ育てていきましょう。" }),
+          h("p", { class: "tree-stage", "data-tree-stage": "" }, "いまの姿：", h("strong", { text: stageName })),
+          stats.days ? h("p", { class: "small", "data-tree-days": "", text: "これまで" + stats.days + "日、お仕事で試しました" }) : null,
+          stats.reviews ? h("p", { class: "small", "data-tree-reviews": "", text: stats.reviews + "回、確認ポイントを見直しました" }) : null,
+          watered
+            ? h("p", { class: "tree-water-message", role: "status", tabindex: "-1", "data-water-message": "", text: "今日も、あなたのペースで。" })
+            : button("水をあげる", onWater, { class: "btn btn--secondary btn--small", "data-water": "" })
+        )
+      ),
+      h(
+        "details",
+        { class: "tree-log" },
+        h("summary", { text: "成長の記録を見る" }),
+        h(
+          "ul",
+          null,
+          h("li", { text: "これまで" + stats.days + "日、お仕事で試しました" }),
+          h("li", { text: stats.reviews + "回、確認ポイントを見直しました" }),
+          h("li", { text: "葉：" + stats.leaves + "枚（ガイドで「試してみた」を押した記録。同じガイドは1日1回まで）" }),
+          h("li", { text: "花：" + stats.reviews + "輪（「確認ポイントを見直した」の記録。同じガイドは1日1回まで）" }),
+          stats.leaves > TREE_RULES.maxLeavesDrawn || stats.reviews > TREE_RULES.maxFlowersDrawn
+            ? h("li", { text: "絵には、葉を" + TREE_RULES.maxLeavesDrawn + "枚、花を" + TREE_RULES.maxFlowersDrawn + "輪まで描いています。それ以上は上の数字で示しています。" })
+            : null
+        ),
+        h("p", { class: "small", text: "木の姿は、お仕事で試した日数で変わります（試作の演出です）：" + stageRuleText() + "。水やりは1日1回できますが、木の姿は変わりません。" }),
+        h("p", { class: "small muted", text: TREE_NOTE })
       )
     );
   }
@@ -1870,6 +2109,7 @@
     const step = state.step || 1;
     const fav = store.isFavorite(card.id);
     const practice = store.practiceOf(card.id);
+    const practicedToday = store.practicedToday(card.id);
     const prompt = buildPrompt(card, gs.sel);
 
     function onFavorite() {
@@ -1882,11 +2122,23 @@
       );
     }
 
+    // 押すたびに「今日の実践」を記録・取り消しする（同じガイドは1日1回まで）
     function onTried() {
-      const now = !store.practiceOf(card.id);
-      store.setTried(card.id, now);
-      rerender(now ? "[data-feedback] input" : "[data-tried]");
-      announce(now ? "「試してみた」を記録しました。感想は選ばなくてもかまいません。" : "「試してみた」の記録を取り消しました。");
+      if (store.practicedToday(card.id)) {
+        store.cancelPractice(card.id);
+        rerender("[data-tried]");
+        announce("今日の「試してみた」の記録を取り消しました。お仕事の木の葉も1枚戻しました。");
+      } else {
+        store.recordPractice(card.id);
+        rerender("[data-feedback] input");
+        announce("「試してみた」を記録しました。お仕事の木の葉が1枚増えました。感想は選ばなくてもかまいません。");
+      }
+    }
+
+    function onReview() {
+      store.recordReview(card.id);
+      rerender("[data-review-done]");
+      announce("確認ポイントの見直しを記録しました。お仕事の木の花が1つ増えました。");
     }
 
     function toggleAlternatives() {
@@ -2025,7 +2277,20 @@
           "section",
           { class: "checkpoints", "aria-labelledby": "check-label" },
           h("h3", { id: "check-label", text: "回答を見るポイント" }),
-          h("ul", null, card.check.map((c) => h("li", { text: c })))
+          h("ul", null, card.check.map((c) => h("li", { text: c }))),
+          store.reviewedToday(card.id)
+            ? h("p", {
+                class: "review-done",
+                role: "status",
+                tabindex: "-1",
+                "data-review-done": "",
+                text: "今日は、このガイドの確認ポイントの見直しを記録しました。お仕事の木に花が1つ増えています。",
+              })
+            : h(
+                "div",
+                { class: "btn-row" },
+                button("確認ポイントを見直した", onReview, { class: "btn btn--secondary btn--small", "data-review": "" })
+              )
         ),
         h("p", { class: "small", text: "気になる点があればステップ5へ。問題がなければ、そのまま最後のチェックに進めます。" }),
         h("div", { class: "btn-row" }, button("問題がなければ：最後のチェックへ", () => goStep(6), { class: "btn btn--ghost btn--small", "data-skip-to-final": "" })),
@@ -2153,7 +2418,7 @@
             "このガイドを完了する",
             () => {
               store.clearProgress(card.id);
-              if (!store.practiceOf(card.id)) store.setTried(card.id, true);
+              store.recordPractice(card.id); // 同じ日に記録済みなら増えない
               state.completed = true;
               rerender("[data-completed]");
               announce("このガイドを完了しました。");
@@ -2201,9 +2466,9 @@
             "aria-pressed": fav ? "true" : "false",
             "data-fav": "",
           }),
-          button(practice ? "✓ 試してみた（記録済み・押すと取り消し）" : "試してみた", onTried, {
+          button(practicedToday ? "✓ 今日、試してみた（押すと今日の記録を取り消し）" : practice ? "今日も試してみた" : "試してみた", onTried, {
             class: "btn btn--ghost",
-            "aria-pressed": practice ? "true" : "false",
+            "aria-pressed": practicedToday ? "true" : "false",
             "data-tried": "",
           }),
           button("ほかの困りごとを見る", toggleAlternatives, {
@@ -2653,11 +2918,21 @@
           "ul",
           null,
           h("li", { text: "お気に入りに保存したカード（現在 " + d.favorites.length + " 件）" }),
+          h("li", {
+            text:
+              "お仕事の木：最後に水やりした日、「試してみた」を押した日とガイド、確認ポイントを見直した日とガイド（現在 試した記録 " +
+              d.tree.practiced.length +
+              " 件・見直しの記録 " +
+              d.tree.reviewed.length +
+              " 件）",
+          }),
           h("li", { text: "ガイドの進み具合：表示中のステップ、選んだ状況、気になる点、確認リストの印（現在 " + Object.keys(d.progress).length + " 件）" }),
           h("li", { text: "カードごとの「試してみた」と、任意で選んだ感想（現在 " + triedCount + " 件、うち感想 " + feedbackCount + " 件）" }),
           h("li", { text: "保存を選んだ最新の診断結果（現在 " + (d.latestResult ? "1 件" : "なし") + "）" })
         ),
         h("p", { class: "small muted", text: "氏名、会社名、業務内容、生成AIに追記した内容は収集しません。入力欄もありません。" }),
+        h("p", { class: "small", "data-tree-note": "", text: TREE_NOTE }),
+        h("p", { class: "small muted", text: "まとめて削除すると、お仕事の木も苗木に戻ります。" }),
         !store.available ? h("p", { class: "notice notice--warn", text: "現在、この環境ではブラウザー内に保存できない状態です。" }) : null
       ),
       h(
@@ -2677,7 +2952,7 @@
           ? h(
               "div",
               { role: "group", "aria-labelledby": "confirm-text" },
-              h("p", { id: "confirm-text", class: "field-error", text: "お気に入り・実践記録・ガイドの進み具合・保存した結果をすべて削除します。元に戻せません。よろしいですか？" }),
+              h("p", { id: "confirm-text", class: "field-error", text: "お気に入り・実践記録・ガイドの進み具合・お仕事の木の記録・保存した結果をすべて削除します。元に戻せません。よろしいですか？" }),
               h(
                 "div",
                 { class: "btn-row" },
