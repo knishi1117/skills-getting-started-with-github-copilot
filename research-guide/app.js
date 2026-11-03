@@ -601,8 +601,12 @@
     return h(
       "div",
       { class: "view view-home" },
-      h("h1", { class: "page-title", text: "今日は、どのお仕事を進めますか？" }),
-      h("p", { class: "lead", text: "お仕事の種類を選ぶと、困りごとごとに、次に試せる行動と生成AIに渡せる指示文が見つかります。" }),
+      h(
+        "div",
+        { class: "hero" },
+        h("h1", { class: "page-title", text: "今日は、どのお仕事を進めますか？" }),
+        h("p", { class: "lead", text: "お仕事の種類を選ぶと、困りごとごとに、次に試せる行動と生成AIに渡せる指示文が見つかります。" })
+      ),
       h(
         "ul",
         { class: "entry-list", "aria-label": "お仕事の種類" },

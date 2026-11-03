@@ -1,7 +1,12 @@
 /* 外部フォントは使わず、端末にある日本語フォントで表示する */
 :root {
-  --bg: #f6f7f9;
+  --bg: #f7f9fc;
   --surface: #ffffff;
+  --card-border: #dfe4eb;
+  --card-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --prompt-bg: #f3f6fa;
+  --hero-from: #eef3fc;
+  --hero-to: #eaf6f2;
   --text: #1f2328;
   --muted: #57606a;
   --border: #d0d7de;
@@ -22,6 +27,11 @@
   :root {
     --bg: #14171b;
     --surface: #1d2127;
+    --card-border: #3a414a;
+    --card-shadow: none;
+    --prompt-bg: #161a1f;
+    --hero-from: #1b2433;
+    --hero-to: #1a2a26;
     --text: #e6e9ed;
     --muted: #a6adb6;
     --border: #3a414a;
@@ -334,7 +344,8 @@ main:focus {
   text-align: left;
   min-height: 56px;
   padding: 12px 16px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
@@ -379,7 +390,8 @@ main:focus {
 /* 実用カード */
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   border-radius: var(--radius);
   padding: 20px 16px;
   margin-top: 16px;
@@ -406,8 +418,8 @@ main:focus {
 }
 
 .prompt__box {
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--prompt-bg);
+  border: 1px solid var(--card-border);
   border-left: 4px solid var(--primary);
   border-radius: 6px;
   padding: 12px 14px;
@@ -602,7 +614,8 @@ progress {
 /* 結果 */
 .suggestion {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   border-radius: var(--radius);
   padding: 16px;
   margin: 12px 0;
@@ -644,7 +657,8 @@ progress {
 }
 
 .more {
-  border: 1px solid var(--border);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
   border-radius: 8px;
   background: var(--surface);
   margin: 8px 0;
@@ -775,4 +789,18 @@ progress {
 /* お気に入り一覧と、その下の注意書きの間をあける */
 .fav-list + .small {
   margin-top: 16px;
+}
+
+/* トップの見出し・説明文のエリア（背景画像・アニメーションなし） */
+.hero {
+  background: linear-gradient(135deg, var(--hero-from), var(--hero-to));
+  border-radius: var(--radius);
+  padding: 20px 16px 4px;
+  margin-bottom: 20px;
+}
+
+@media (min-width: 640px) {
+  .hero {
+    padding: 28px 24px 8px;
+  }
 }
