@@ -138,6 +138,865 @@
   const CARD_BY_ID = Object.fromEntries(CARDS.map((c) => [c.id, c]));
   const cardsIn = (categoryId) => CARDS.filter((c) => c.category === categoryId);
 
+  // ---------------------------------------------------------------------------
+  // 選択式の実務ガイド（全8本）
+  //
+  // 指示文は各カードの確定文面（card.prompt）を基礎にし、選んだ条件に応じた指示を後ろに足す。
+  // 見本はすべて架空の例。業界予測や数字を確認済みの事実として扱わない。
+  // Excel の見本は小さな架空の表で、表計算ソフトで再計算して確かめた値を載せている。
+  // ---------------------------------------------------------------------------
+
+  const GUIDE_STEPS = [
+    "状況を選ぶ",
+    "進め方と指示文を見る",
+    "普段の生成AIで試す",
+    "見本と確認ポイントを見る",
+    "気になる点と修正方法",
+    "最後のチェック",
+  ];
+
+  // 「未定」として扱う選択肢の値
+  const UNDECIDED = "undecided";
+
+  // 修正用の指示文を貼り付けるときの共通の案内
+  const FIX_NEXT_STEP = "生成AIの同じやり取りの続きに貼り付けて送ってください。修正された回答が出たら、ステップ4で確認しましょう。";
+
+  const UNSURE_LEAD = "判断がつかないのは自然なことです。次の場所を見ると、判断しやすくなります。";
+  const OK_LEAD = "修正は必要なさそうです。最後のチェックで確かめて、完了しましょう。";
+
+  const GUIDES = {
+    scope: {
+      groups: [
+        {
+          id: "purpose",
+          label: "報告の目的",
+          choices: [
+            ["trend", "動向共有"],
+            ["risk", "リスク把握"],
+            ["measure", "施策検討"],
+            [UNDECIDED, "まだ決まっていない"],
+          ],
+        },
+        {
+          id: "period",
+          label: "対象期間",
+          choices: [
+            ["now", "現状"],
+            ["1y", "今後1年"],
+            ["3y", "今後3年"],
+            ["5y", "今後5年"],
+            [UNDECIDED, "未定"],
+          ],
+        },
+        {
+          id: "audience",
+          label: "報告相手",
+          choices: [
+            ["exec", "経営層"],
+            ["boss", "上司"],
+            ["team", "部内"],
+            [UNDECIDED, "未定"],
+          ],
+        },
+      ],
+      extra(sel) {
+        return [
+          conditionBlock("現時点の条件（仮置きを含む）", this.groups, sel),
+          "「未定」「まだ決まっていない」「未選択」の項目は仮置きとして扱い、決めつけずに候補を2〜3個示して、私に選んでもらってください。決まっている項目は、質問を省いてかまいません。",
+          "最後に、調べる問い3つそれぞれについて、「ここまで分かれば調査を終える」という目安を1つずつ添えてください。",
+        ].join("\n");
+      },
+      example: {
+        before: {
+          lines: ["調べる問い：「業界の将来について調べる」", "→ 対象も期間も決まっておらず、何をどこまで調べればよいか分からない。"],
+        },
+        after: {
+          lines: [
+            "仮置きした条件：目的＝施策検討／対象期間＝今後3年／報告相手＝上司",
+            "問い1：今後3年で、自社の主な顧客層の購買方法はどう変わりそうか（終える目安：公的統計と業界団体の公表資料で、傾向を2つ以上確認できたら）",
+            "問い2：同じ期間に、競合他社はどんな新サービスを公表しているか（終える目安：主要な競合3社の公表資料を確認できたら）",
+            "問い3：その変化に対して、自社が検討できる施策の候補は何か（終える目安：候補を3つ挙げ、それぞれに根拠となる資料が1つ以上ある）",
+          ],
+        },
+      },
+      issues: [
+        {
+          id: "too-broad",
+          label: "問いが広すぎる",
+          check: "問いに「対象（誰・何）」「期間」「観点（市場・技術・制度など）」のどれが欠けているか。",
+          change: "欠けている要素を1つ足して、問いを1文で言い直します。1つの問いに観点は1つまでにします。",
+          fix: "先ほどの調べる問いは範囲が広すぎます。各問いについて、対象・期間・観点のうち足りない要素を指摘し、それを補った問いに言い換えてください。言い換えた問いは、1つの問いにつき観点を1つに絞ってください。私が伝えていない条件を補う場合は、仮置きと明記してください。",
+        },
+        {
+          id: "too-many",
+          label: "調べることが多すぎる",
+          check: "報告の目的に直接答える問いはどれか。",
+          change: "問いを「必ず調べる」「余裕があれば調べる」「今回は調べない」に分け、「必ず調べる」を3つ以内にします。",
+          fix(sel) {
+            return (
+              "調べることが多すぎて進められません。報告の目的（" +
+              choiceLabel(GUIDES.scope.groups[0], sel.purpose) +
+              "）に照らして、各問いを「必ず調べる」「余裕があれば調べる」「今回は調べない」に分け、理由を1文ずつ添えてください。「必ず調べる」は3つ以内にしてください。目的が仮置きの場合は、仮置きのまま判断した点を明記してください。"
+            );
+          },
+        },
+        {
+          id: "no-end",
+          label: "どこまで調べれば十分か分からない",
+          check: "各問いに「何が分かれば終わりか」が書かれているか。",
+          change: "問いごとに、終える目安（確認する資料の種類と数、答えをまとめる形）を決めます。",
+          fix: "各問いについて、調査を終える目安を決めたいです。「どんな種類の資料を、いくつ確認できたら終えるか」「答えをどんな形（一文の結論、比較表など）でまとめるか」を、問いごとに提案してください。報告の期限や分量が分からない場合は、推測せずに私に確認してください。",
+        },
+        { id: "ok", kind: "ok", label: "この問いで進められそう" },
+        {
+          id: "unsure",
+          kind: "unsure",
+          label: "まだ判断がつかない",
+          examples: [
+            "問いを1つ選び、「報告相手は、この答えを聞いて何を判断できるか」を一言で言えるか試します。言いにくい場合は、目的とのつながりを見直す合図です。",
+            "問いに「いつの」「どこの（どの市場・どの顧客）」が入っているか見ます。例：「業界の将来」→「今後3年の、国内の法人向け市場」。",
+            "調べ始める最初の資料（公的統計、業界団体の公表資料など）が思い浮かぶか考えます。浮かばない場合は、問いがまだ大きいかもしれません。",
+          ],
+        },
+      ],
+      final: [
+        "調べる問いが3つ程度に絞られ、それぞれ1文で言える。",
+        "各問いに、調査を終える目安がある。",
+        "仮置きの条件が、仮置きだと分かる形で残っている。",
+        "報告相手が、答えを聞いて何を判断できるかを言える。",
+      ],
+    },
+
+    organize: {
+      groups: [
+        {
+          id: "goal",
+          label: "今回したいこと",
+          choices: [
+            ["classify", "内容を分類したい"],
+            ["select", "報告に使う情報を選びたい"],
+            ["gaps", "不足や重複を見つけたい"],
+          ],
+        },
+      ],
+      extra(sel) {
+        const lines = {
+          classify:
+            "今回の主な目的は、内容の分類です。上の3つに分ける前に、情報を内容の近いもの同士でまとめ、まとまりごとに分類の基準を1文で示してください。1つの情報が複数のまとまりに当てはまる場合は、どちらに入れたかと理由を添えてください。",
+          select:
+            "今回の主な目的は、報告に使う情報の選定です。「目的に直接関係する」に入れた情報について、報告のどの部分（結論・根拠・背景）で使えるかを添えてください。報告目的と反対の見方を示す情報は、優先度が低くても除外せず、別に挙げてください。",
+          gaps:
+            "今回の主な目的は、不足や重複の発見です。分類したうえで、内容が重なっている情報の組み合わせと、報告目的に答えるために足りない情報を挙げてください。足りない情報は、どんな種類の資料で確かめられそうかも添えてください。",
+        };
+        return lines[sel.goal] || "";
+      },
+      example: {
+        before: {
+          lines: ["集めたメモ8件を「市場」「技術」「その他」に分けたが、「その他」が半分を占め、どれを報告に使うか決まらない。"],
+        },
+        after: {
+          lines: [
+            "架空の報告目的：「新サービスの検討に向けて、顧客ニーズの変化を共有する」",
+            "目的に直接関係する：顧客アンケートの公表結果、問い合わせ傾向のメモ（根拠に使う）",
+            "背景として役立つ：業界団体の年次報告の概要",
+            "今回は優先度が低い：海外の技術展示会の記事（理由：今回の顧客層と直接つながらない）",
+            "反対の見方：「ニーズは大きく変わっていない」とする調査記事（除外せず、別に記載）",
+          ],
+        },
+      },
+      issues: [
+        {
+          id: "overlap",
+          label: "分類が重なる",
+          check: "分類の名前に、「テーマ別」と「情報源別」のような違う軸が混ざっていないか。",
+          change: "分類の軸を1つに決め、各分類に入る条件を1文で書きます。",
+          fix: "先ほどの分類には重なりがあります。分類の軸（テーマ別、情報源別、時期別など）が混ざっていないか確認し、軸を1つに統一してください。各分類に入る条件を1文で示し、複数に当てはまる情報は、どちらに入れたかと理由を示してください。",
+        },
+        {
+          id: "no-fit",
+          label: "どの分類にも入らない",
+          check: "入らない情報が、報告の目的と関係あるか。",
+          change: "関係があれば分類を1つ足し、関係がなければ「保留」にまとめます。",
+          fix: "どの分類にも入らない情報があります。それぞれについて、報告目的との関係を1文で説明し、「分類を追加して入れる」「保留にする」のどちらが適切か提案してください。新しい分類を作る場合は、入る条件も示してください。",
+        },
+        {
+          id: "cant-pick",
+          label: "重要な情報を選べない",
+          check: "報告相手が判断するときに、欠けたら困る情報はどれか。",
+          change: "「この情報がなくても結論は変わらないか」で1件ずつ確かめます。反対の見方を示す情報は残します。",
+          fix: "重要な情報を選べずにいます。各情報について「この情報がなかった場合、報告の結論や判断が変わるか」を基準に、変わるもの・変わらないものに分けてください。報告目的と反対の見方を示す情報は、結論が変わるかどうかに関わらず、別に残してください。情報の正しさは確認済みとして扱わないでください。",
+        },
+        {
+          id: "no-flow",
+          label: "整理しても流れが見えない",
+          check: "分類ごとに「この分類から何が言えるか」を1文で書けるか。",
+          change: "分類を「現状→変化→自社への影響」のような、報告の順番に並べ直します。",
+          fix: "情報を分類しましたが、報告の流れが見えません。分類ごとに「ここから言えること」を1文で示し、報告目的に合う順番（例：現状→変化→自社への影響）に並べ替えてください。言えることの根拠が弱い分類には、その旨を記してください。",
+        },
+        { id: "ok", kind: "ok", label: "この整理で進められそう" },
+        {
+          id: "unsure",
+          kind: "unsure",
+          label: "まだ判断がつかない",
+          examples: [
+            "「今回は優先度が低い」に入った情報を1つ選び、報告相手に聞かれたら説明が要りそうか考えます。要りそうなら、背景に戻す候補です。",
+            "分類ごとの件数を見ます。1つの分類に大半が集まっている場合は、分類の軸が大きすぎるかもしれません。",
+            "自分の考えと反対の見方を示す情報が、どこかに残っているか確かめます。",
+          ],
+        },
+      ],
+      final: [
+        "分類の軸が1つにそろい、各分類に入る条件を説明できる。",
+        "報告に使う情報に、使う場所（結論・根拠・背景）が決まっている。",
+        "反対の見方を示す重要な情報を、除外せずに残している。",
+        "情報の正しさは、出典を開いて確かめる予定がある（AIの分類だけでは確認済みにならない）。",
+      ],
+    },
+
+    refine: {
+      groups: [
+        {
+          id: "symptom",
+          label: "気になっていること",
+          choices: [
+            ["general", "一般論が多い"],
+            ["mismatch", "欲しかった答えと違う"],
+            ["source", "根拠が分からない"],
+          ],
+        },
+      ],
+      extra(sel) {
+        const lines = {
+          general:
+            "気になっている点は、一般論が多いことです。回答のうち、私の目的や条件に関係なく誰にでも当てはまる部分を指摘したうえで、具体化に必要な条件を質問してください。",
+          mismatch:
+            "気になっている点は、欲しかった答えと違うことです。まず、あなたが私の質問をどう理解したかを1文で示してください。そのうえで、私の目的とのずれを確かめる質問をしてください。",
+          source:
+            "気になっている点は、根拠が分からないことです。回答に含まれる事実や数字を一覧にし、出典を示せるもの・示せないものに分けてください。出典を示す場合は、私が実際に開いて確認できるよう、資料名と公表元を示してください。示せないものは、推測を含む可能性があると明記してください。",
+        };
+        return lines[sel.symptom] || "";
+      },
+      example: {
+        before: {
+          lines: ["質問：「業界の今後の課題は？」", "回答：「人材不足やデジタル化への対応が重要です」など、どの業界にも当てはまる内容になった。"],
+        },
+        after: {
+          lines: [
+            "伝えた目的：「部内の勉強会で、顧客対応部門の課題を共有する」",
+            "伝えた条件：「対象は自社の顧客対応業務、期間は今後1年」",
+            "修正後の回答：問い合わせの繁忙期の人員配置など、対象を絞った課題が挙がり、「自社の実績データで要確認」の点が分けて示された。",
+          ],
+        },
+      },
+      issues: [
+        {
+          id: "abstract",
+          label: "まだ抽象的",
+          check: "回答の文に、対象・期間・自分の状況のどれが入っているか。",
+          change: "抽象的な文を選び、「誰が・何を・いつまでに」が分かる形に言い換えてもらいます。",
+          fix: "先ほどの回答はまだ抽象的です。回答の中で、特定の対象・期間・状況に結びついていない文を挙げ、それぞれ「誰が・何を・いつまでに」が分かる形に言い換えてください。言い換えに必要な情報が足りない場合は、推測で補わず、私に質問してください。",
+        },
+        {
+          id: "assumed",
+          label: "条件が勝手に補われている",
+          check: "回答が前提にしている条件のうち、自分が伝えていないものはどれか。",
+          change: "前提を一覧にしてもらい、伝えていない前提は外すか、自分で確かめてから残します。",
+          fix: "先ほどの回答には、私が伝えていない前提が含まれているようです。回答が前提にしている条件をすべて一覧にし、「私が伝えた条件」「あなたが補った条件」に分けてください。補った条件は外し、必要なものは私に確認してから回答を修正してください。",
+        },
+        {
+          id: "no-source",
+          label: "事実や数字の出典が確認できない",
+          check: "事実や数字ごとに、資料名・公表元・公表時期が示されているか。",
+          change:
+            "出典を挙げてもらったうえで、自分で資料を開き、記載内容と日付を確かめます。AIに再確認させるだけでは、正しさは保証されません。見つからない内容は「要確認」として扱います。",
+          fix: "先ほどの回答に含まれる事実や数字について、出典を確認したいです。それぞれ「資料名」「公表元」「公表時期」を示し、示せないものは「出典不明」と明記してください。出典が示せない内容は、根拠のある内容と区別して書き直してください。",
+        },
+        { id: "ok", kind: "ok", label: "目的に合う回答になった" },
+        {
+          id: "unsure",
+          kind: "unsure",
+          label: "まだ判断がつかない",
+          examples: [
+            "回答から1文を選び、主語を別の会社に置き換えても意味が通るか見ます。どの会社にも当てはまるなら、一般論の合図です。",
+            "数字や固有名詞に、資料名や公表元が付いているか見ます。",
+            "自分が伝えた条件（目的・対象・期間）が、回答の中で使われているか探します。",
+          ],
+        },
+      ],
+      final: [
+        "回答が、伝えた目的と条件に沿っている。",
+        "AIが補った前提を見分け、必要なものだけ残した。",
+        "報告に使う事実や数字は、出典を自分で開いて記載内容と日付を確かめた（または確かめる予定がある）。",
+        "出典を確かめられない内容は、報告で「要確認」と分かるようにした。",
+      ],
+    },
+
+    outline: {
+      groups: [
+        {
+          id: "purpose",
+          label: "報告の目的",
+          choices: [
+            ["trend", "動向共有"],
+            ["risk", "リスク報告"],
+            ["proposal", "施策提案"],
+          ],
+        },
+        {
+          id: "audience",
+          label: "報告相手",
+          choices: [
+            ["exec", "経営層"],
+            ["boss", "上司"],
+            ["team", "部内"],
+          ],
+        },
+        {
+          id: "length",
+          label: "長さ",
+          choices: [
+            ["short", "短い要約"],
+            ["standard", "標準"],
+            ["long", "詳しい報告"],
+          ],
+        },
+      ],
+      extra(sel) {
+        const purpose = {
+          trend: "変化の事実と、その見通しを分けて示してください。",
+          risk: "リスクごとに、起きた場合の影響と、確認できている根拠を分けて示してください。",
+          proposal: "最後の章で、相手に判断してほしいこと（承認・選択など）を1文で示してください。",
+        };
+        const audience = {
+          exec: "冒頭で、結論と判断してほしいことを示してください。",
+          boss: "結論の後に、根拠と次の対応を示してください。",
+          team: "背景と専門用語を短く補ってください。",
+        };
+        const length = {
+          short: "章は3つ以内にしてください。",
+          standard: "章は4〜6つにしてください。",
+          long: "章の数は必要に応じてかまいませんが、各章の要点を一文で示してください。",
+        };
+        const lines = [conditionBlock("報告の条件", this.groups, sel)];
+        [purpose[sel.purpose], audience[sel.audience], length[sel.length]].forEach((t) => t && lines.push(t));
+        lines.push("各章の内容が「事実」「予測」「私の考察」のどれに当たるかも示してください。");
+        return lines.filter(Boolean).join("\n");
+      },
+      example: {
+        before: {
+          lines: ["骨子：1. 市場の動き　2. 競合の動き　3. 技術の動き　4. まとめ", "→ 見出しだけで、各章で何を伝えるかが分からない。"],
+        },
+        after: {
+          lines: [
+            "条件：目的＝施策提案／相手＝上司／長さ＝標準",
+            "1. 結論：既存顧客向けの定期点検サービスの検討を提案する（考察）",
+            "2. 顧客の変化：保守を外部に任せたいという問い合わせが目立つ（事実：問い合わせ記録で要確認）",
+            "3. 競合の動き：同業他社が類似サービスを公表している（事実：各社の公表資料で確認）",
+            "4. 見通し：今後3年で需要が伸びる可能性がある（予測：根拠が限られることを明記）",
+            "5. 判断してほしいこと：来期に検討チームを立ち上げるかどうか",
+          ],
+        },
+      },
+      issues: [
+        {
+          id: "list",
+          label: "情報の羅列に見える",
+          check: "各章の見出しの下に「この章で伝えること」が1文であるか。",
+          change: "章ごとに伝えることを一文で書き、その一文を支えない情報は外します。",
+          fix: "先ほどの骨子は、情報の羅列に見えます。各章について「この章で伝えること」を1文で示し、その1文を支えない情報は「今回は使わない」に移してください。章の順番が報告の目的に合っているかも見直してください。",
+        },
+        {
+          id: "vague",
+          label: "伝えたいことが曖昧",
+          check: "報告全体の結論を1文で言えるか。",
+          change: "結論を1文にし、各章がその結論のどこを支えるかを書きます。",
+          fix: "報告で伝えたいことが曖昧です。報告全体の結論を1文の候補として3つ示し、それぞれについて、どの章が根拠になるかを示してください。根拠が足りない候補には、その旨を記してください。結論は仮説として扱ってください。",
+        },
+        {
+          id: "gap",
+          label: "結論と根拠がつながらない",
+          check: "結論の各部分に対応する根拠があるか。根拠より強い言い方になっていないか。",
+          change: "結論を根拠が支えられる範囲に収めるか、足りない根拠を「追加確認」に回します。",
+          fix: "結論と根拠がつながっていません。結論を要素に分け、それぞれを支える根拠の章を対応させてください。根拠が支えられない部分は、結論の表現を弱めるか「追加確認が必要」と記してください。各章の内容が事実・予測・考察のどれに当たるかも示してください。",
+        },
+        {
+          id: "decision",
+          label: "相手に判断してほしいことが伝わらない",
+          check: "最後の章に、相手にしてほしいこと（承認・選択・意見・共有のみ）が書かれているか。",
+          change: "判断してほしいことを1文で書き、冒頭にも置きます。",
+          fix: "報告相手に判断してほしいことが伝わりません。相手に求めること（承認、選択、意見、共有のみ など）を1文で示し、冒頭と最後の章に置いた骨子に修正してください。選択を求める場合は、選択肢とそれぞれの根拠を示してください。",
+        },
+        { id: "ok", kind: "ok", label: "この骨子で進められそう" },
+        {
+          id: "unsure",
+          kind: "unsure",
+          label: "まだ判断がつかない",
+          examples: [
+            "各章の見出しの横に「ここで伝えること」を一文で書いてみます。書けない章があれば、その章は羅列になっているかもしれません。",
+            "結論の文から「必ず」「確実に」などの強い言葉を探し、根拠の章にその強さを支える事実があるか見ます。",
+            "報告相手になったつもりで読み、読み終えた後に「自分は何を決めればよいか」が分かるか確かめます。",
+          ],
+        },
+      ],
+      final: [
+        "各章に「伝えること」が一文で書かれている。",
+        "結論が、根拠の章で支えられる範囲に収まっている。",
+        "事実・予測・自分の考察が区別できる。",
+        "相手に判断してほしいことが、冒頭と最後で分かる。",
+        "根拠が足りない部分には「追加確認が必要」と記した。",
+      ],
+    },
+
+    "excel-function": {
+      groups: [
+        {
+          id: "kind",
+          label: "したい処理",
+          choices: [
+            ["judge", "条件で判定"],
+            ["lookup", "値を検索"],
+            ["sum", "合計や件数を集計"],
+            ["text", "文字や日付を処理"],
+            [UNDECIDED, "どれか分からない"],
+          ],
+        },
+      ],
+      extra(sel) {
+        const lines = {
+          judge: "したい処理は、条件による判定です。IF関数など、条件によって表示を変える方法を中心に提案してください。条件が複数ある場合の書き方も示してください。",
+          lookup:
+            "したい処理は、値の検索です。XLOOKUP関数やVLOOKUP関数など、表から値を探す方法を中心に提案してください。見つからない場合に何が表示されるかと、XLOOKUPが使えないバージョンでの代わりの方法も示してください。",
+          sum: "したい処理は、合計や件数の集計です。SUMIFS関数やCOUNTIFS関数など、条件付きの合計や件数を中心に提案してください。",
+          text: "したい処理は、文字や日付の処理です。文字の結合や取り出し、日付の計算に使う関数を中心に提案してください。日付が文字として入力されている場合の見分け方も示してください。",
+          [UNDECIDED]:
+            "どの種類の処理か、私にも分かっていません。実現したいことを聞いたうえで、処理の種類（判定・検索・集計・文字や日付の処理）を一緒に見極めてください。",
+        };
+        return [
+          lines[sel.kind] || "",
+          "数式例は先頭の「=」を含めて示し、参照範囲（例：A2:A4）を自分の表に置き換える方法を説明してください。通常の値・空欄・一致しない値の3通りで結果を確かめる架空の例も示してください。",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      },
+      example: {
+        note: "架空の表で、コードから部署を探す例です（表計算ソフトで再計算して確かめた結果です）。",
+        table: {
+          caption: "架空の表（A1:B4）",
+          head: ["", "A：コード", "B：部署"],
+          rows: [
+            ["2", "K01", "営業"],
+            ["3", "K02", "総務"],
+            ["4", "K03", "開発"],
+          ],
+        },
+        before: {
+          lines: [
+            "数式：=VLOOKUP(D2,$A$2:$B$4,2)",
+            "探す値が K02 → 総務（正しい）",
+            "探す値が K05（表にない）→ 開発（誤り。最後の引数を省くと近い値を探すため）",
+            "探す値が空欄 → #N/A",
+          ],
+        },
+        after: {
+          lines: [
+            "数式：=IFNA(VLOOKUP(D2,$A$2:$B$4,2,FALSE),\"該当なし\")",
+            "探す値が K02 → 総務",
+            "探す値が K05 → 該当なし",
+            "探す値が空欄 → 該当なし",
+            "最後の引数を FALSE にして完全に一致する値だけを探し、見つからない場合（#N/A）だけ「該当なし」と表示します。XLOOKUPが使えるExcelでは =XLOOKUP(D2,$A$2:$A$4,$B$2:$B$4,\"該当なし\") でも同じ考え方で書けます。",
+          ],
+        },
+      },
+      issues: [
+        {
+          id: "unavailable",
+          label: "関数が利用できない",
+          check: "Excelのバージョン（「ファイル」→「アカウント」で確認）と、関数名のつづり。#NAME? は、関数が使えない場合とつづりの誤りの両方で出ます。",
+          change: "使えるバージョンの関数に置き換えます（例：XLOOKUP → INDEX と MATCH、または VLOOKUP）。",
+          fix: "提案された関数が、私のExcelでは使えないようです（#NAME? と表示される など）。私のExcelのバージョンを確認する方法を示したうえで、古いバージョンでも使える代わりの方法（例：XLOOKUP の代わりに INDEX と MATCH）で、同じ処理の数式例を示してください。関数名のつづりの誤りでないかを確かめる方法も示してください。",
+        },
+        {
+          id: "unexpected",
+          label: "結果が想定と違う",
+          check: "参照範囲がずれていないか。比べている値の形式（文字と数値）が同じか。",
+          change: "架空の表で1行ずつ結果を確かめ、ずれた行の値と参照先を見ます。",
+          fix: "提案された数式の結果が想定と違います。架空の例で、入力値・期待する結果・実際の結果を3行ほど伝えます。どの部分（参照範囲、探し方の指定、値の形式など）が原因になりうるかを順に挙げ、それぞれの確かめ方と修正例を示してください。",
+        },
+        {
+          id: "blanks",
+          label: "空欄や一致しない値で困る",
+          check: "空欄や一致しない値のときに、何を表示したいか決まっているか。",
+          change: "その場合の表示（空欄のまま、「該当なし」など）を決めて数式に組み込みます。エラーを隠すだけにはしません。",
+          fix: "空欄や一致しない値があると、意図しない結果になります。「通常の値」「空欄」「一致しない値」の3通りの架空の例で、それぞれ何が表示されるかを示してください。そのうえで、空欄や一致しない場合に表示する内容を私に確認してから、数式を修正してください。エラーを非表示にするだけの修正にはしないでください。",
+        },
+        {
+          id: "range",
+          label: "参照範囲が分からない",
+          check: "数式の中の A2:A4 のような範囲が、自分の表のどの列・行に当たるか。",
+          change: "見出し行を除いたデータの範囲に置き換えます。データが増える表なら、テーブル機能も検討します。",
+          fix: "数式の参照範囲を、自分の表に置き換える方法が分かりません。数式例に含まれる範囲（例：A2:A4）がそれぞれ何を指しているかを説明し、見出しの位置やデータの行数が違う表に置き換える手順を、架空の列構成で示してください。データが今後増える場合の書き方も示してください。",
+        },
+        { id: "ok", kind: "ok", label: "期待どおり動いた" },
+        {
+          id: "unsure",
+          kind: "unsure",
+          label: "まだ判断がつかない",
+          examples: [
+            "数式を入れたセルを選び、数式バーで参照範囲（例：A2:A4）が自分の表のデータ部分と同じ行・列になっているか見ます。",
+            "通常の値・空欄・表にない値を1つずつ入れて、結果がどう変わるか見ます。",
+            "数式の先頭に「=」があるか見ます。ないと、数式ではなく文字として表示されます。",
+          ],
+        },
+      ],
+      final: [
+        "数式の先頭に「=」があり、数式として計算されている。",
+        "参照範囲が、自分の表のデータ部分（見出しを除く）に合っている。",
+        "通常の値・空欄・一致しない値の3通りで結果を確かめた。",
+        "使った関数が、自分や共有相手のExcelで使えることを確かめた。",
+        "元のファイルのコピーで試してから反映した。",
+      ],
+    },
+
+    "excel-error": {
+      groups: [
+        {
+          id: "state",
+          label: "いまの状況",
+          choices: [
+            ["error", "エラー表示が出る"],
+            ["wrong", "エラー表示はないが結果がおかしい"],
+            [UNDECIDED, "原因が分からない"],
+          ],
+        },
+      ],
+      extra(sel) {
+        const lines = {
+          error: "状況：エラー表示（#N/A、#VALUE!、#REF! など）が出ています。",
+          wrong: "状況：エラー表示は出ていませんが、結果が期待と違います。エラーが出ない原因（参照のずれ、文字として入力された数値など）も候補に含めてください。",
+          [UNDECIDED]: "状況：何が原因か見当がつきません。確認する点を1つずつ案内してください。",
+        };
+        return [
+          lines[sel.state] || "",
+          "原因は、表示 → 期待する結果 → 参照先 → データの形式 の順に切り分けてください。IFERROR関数などでエラーを非表示にする方法は、原因を確かめた後の選択肢として扱い、原因の解消とは区別してください。",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      },
+      example: {
+        note: "架空の表で、金額を計算する例です（表計算ソフトで再計算して確かめた結果です）。",
+        table: {
+          caption: "架空の表",
+          head: ["", "A：数量", "B：単価", "C：金額"],
+          rows: [
+            ["2", "3", "500", "（数式）"],
+            ["3", "2", "なし", "（数式）"],
+          ],
+        },
+        before: {
+          lines: [
+            "数式：=IFERROR(A3*B3,0)",
+            "3行目の結果 → 0",
+            "単価に文字（なし）が入っているため本当は #VALUE! になる計算ですが、0 と表示されて「金額0円」に見え、単価が未入力であることに気づけません。",
+          ],
+        },
+        after: {
+          lines: [
+            "まず =A3*B3 のままで #VALUE! が出ることを確かめ、参照先の B3 に文字が入っていることを突き止めます。",
+            "原因の解消：B3 に正しい単価を入力します。",
+            "単価が未確定の行を区別したい場合：=IF(ISNUMBER(B3),A3*B3,\"単価を確認\")",
+            "2行目の結果 → 1500／3行目の結果 → 単価を確認",
+          ],
+        },
+      },
+      issues: [
+        {
+          id: "hidden",
+          label: "エラー表示だけ消えた",
+          check: "IFERROR などで表示を隠していないか。隠した行の元データに問題が残っていないか。",
+          change: "いったん非表示をやめて元のエラーを出し、原因を確かめてから扱いを決めます。",
+          fix: "エラー表示は消えましたが、原因が解消したか分かりません。IFERROR関数などで非表示にしている場合は、それを外したときに出るエラーの種類から、原因の候補と確かめ方を示してください。原因を解消する修正と、表示を整えるだけの修正を分けて説明してください。",
+        },
+        {
+          id: "recur",
+          label: "一部の行で再発する",
+          check: "正常な行と再発する行で、参照先の値の形式（数値・文字・空欄）や、数式のコピーによる参照のずれがないか。",
+          change: "参照を固定（$）するか、データの形式をそろえます。",
+          fix: "修正した数式が、一部の行でまたエラーになります。正常な行と再発する行を比べるために確かめる点（参照先の値の形式、空欄、数式をコピーしたときの参照のずれ、$ による固定）を順に示し、それぞれの修正例を示してください。",
+        },
+        {
+          id: "wrong",
+          label: "結果が想定と違う",
+          check: "期待する結果を、架空データ1〜2行の手計算と比べたか。",
+          change: "参照先、計算の順番（かっこ）、文字として入った数値がないかを確かめます。",
+          fix: "エラーは出なくなりましたが、結果が期待と違います。期待する結果を手計算で確かめる方法を示したうえで、参照先、計算の順番、文字として入力された数値など、結果がずれる原因の候補を順に挙げ、確かめ方を示してください。",
+        },
+        { id: "ok", kind: "ok", label: "原因と修正を確認できた" },
+        {
+          id: "unsure",
+          kind: "unsure",
+          label: "まだ判断がつかない",
+          examples: [
+            "エラーが出ているセルを選び、数式バーで参照先のセルを確かめます。参照先に文字（例：「なし」「-」）が入っていないか見ます。",
+            "同じ列の正常な行と比べ、数式の参照がずれていないか見ます（例：C2 は =A2*B2 なのに、C5 が =A5*B6 になっている）。",
+            "IFERROR などで囲まれている場合は、外したときにどんなエラーが出るか見ます。",
+          ],
+        },
+      ],
+      final: [
+        "エラーの原因（参照先・データの形式など）を確かめた。",
+        "エラーを非表示にしただけの状態になっていない。",
+        "正常な行と、問題があった行の両方で結果を確かめた。",
+        "期待する結果を、1〜2行の手計算と照らし合わせた。",
+        "元のファイルのコピーで試してから反映した。",
+      ],
+    },
+
+    "excel-aggregate": {
+      groups: [
+        {
+          id: "method",
+          label: "集計の方法",
+          choices: [
+            ["sum", "合計"],
+            ["count", "件数"],
+            ["average", "平均"],
+            [UNDECIDED, "未定"],
+          ],
+        },
+        {
+          id: "freq",
+          label: "頻度",
+          choices: [
+            ["once", "一度だけ"],
+            ["repeat", "繰り返し行う"],
+          ],
+        },
+      ],
+      extra(sel) {
+        const lines = [conditionBlock("集計の条件", this.groups, sel)];
+        if (sel.method === UNDECIDED || !sel.method) {
+          lines.push("集計の方法（合計・件数・平均など）はまだ決まっていません。目的を聞いたうえで、候補とそれぞれで分かることを示してください。");
+        }
+        if (sel.method === "average") {
+          lines.push("平均は、空欄やゼロを計算に含めるかで結果が変わります。どちらにするか私に確認してください。");
+        }
+        if (sel.freq === "repeat") {
+          lines.push("繰り返し行う集計なので、データを追加しても集計範囲が自動で広がる方法（テーブル機能、ピボットテーブルの更新など）を示してください。");
+        }
+        if (sel.freq === "once") {
+          lines.push("一度だけの集計なので、手順が少ない方法を優先してください。");
+        }
+        lines.push("集計範囲・条件・空欄・重複の扱いを確かめる手順と、架空データの一部を手計算して照合する方法も示してください。");
+        return lines.join("\n");
+      },
+      example: {
+        note: "架空の表で、りんごの売上を合計する例です（表計算ソフトで再計算して確かめた結果です）。",
+        table: {
+          caption: "架空の表（5行目は後から追加した行）",
+          head: ["", "A：商品", "B：売上"],
+          rows: [
+            ["2", "りんご", "100"],
+            ["3", "みかん", "200"],
+            ["4", "りんご", "150"],
+            ["5", "りんご", "80"],
+          ],
+        },
+        before: {
+          lines: ["数式：=SUMIFS(B2:B4,A2:A4,\"りんご\")", "結果 → 250", "範囲が4行目までなので、後から追加した5行目（80）が抜けています。"],
+        },
+        after: {
+          lines: [
+            "数式：=SUMIFS(B:B,A:A,\"りんご\")（列全体を範囲にする。テーブル機能でも可）",
+            "結果 → 330",
+            "手計算で照合：100 ＋ 150 ＋ 80 ＝ 330",
+          ],
+        },
+      },
+      issues: [
+        {
+          id: "mismatch",
+          label: "数字が合わない",
+          check: "架空データの一部を手計算した値と、集計結果を比べたか。どの行が集計に含まれているか。",
+          change: "範囲と条件を見直します（条件の表記ゆれ、余分な空白、文字として入った数値など）。",
+          fix: "集計結果が手計算と合いません。集計に含まれている行を確かめる方法を示し、ずれの原因になりやすい点（集計範囲、条件の表記ゆれ、余分な空白、文字として入力された数値）を順に挙げて、確かめ方と修正例を示してください。",
+        },
+        {
+          id: "missing",
+          label: "対象データが抜ける",
+          check: "集計範囲の最後の行が、データの最後の行と合っているか。条件と表記が違う行がないか。",
+          change: "範囲を広げるか、テーブル機能を使います。表記をそろえます。",
+          fix: "集計から一部のデータが抜けているようです。集計範囲がデータ全体を含んでいるか、条件と表記が違う行がないかを確かめる手順と、範囲を広げる・表記をそろえる修正例を示してください。",
+        },
+        {
+          id: "dup-blank",
+          label: "重複や空欄の扱いが分からない",
+          check: "重複した行を1件と数えるか。空欄を0とみなすか、除くか。",
+          change: "扱いを先に決め、集計の前にデータを確かめます（重複の確認、空欄の確認）。",
+          fix: "重複した行や空欄の扱いが決まっていません。重複を1件として数える場合とそのまま数える場合、空欄を0とみなす場合と除く場合で、集計結果がどう変わるかを、架空の小さな表で示してください。そのうえで、どちらにするか私に確認してから手順を示してください。",
+        },
+        {
+          id: "no-update",
+          label: "データ追加で集計が変わらない",
+          check: "集計範囲が固定（例：B2:B4）になっていないか。ピボットテーブルを更新したか。",
+          change: "テーブル機能、列全体の参照、ピボットテーブルの更新を使います。",
+          fix: "データを追加しても集計結果が変わりません。集計範囲が固定されていないか、ピボットテーブルの更新が必要かを確かめる手順と、データを追加すると集計範囲が自動で広がる方法（テーブル機能など）を示してください。",
+        },
+        { id: "ok", kind: "ok", label: "結果を確認できた" },
+        {
+          id: "unsure",
+          kind: "unsure",
+          label: "まだ判断がつかない",
+          examples: [
+            "集計範囲の最後の行が、データの最後の行と同じか見ます（例：データは5行目まであるのに、範囲が B2:B4 で止まっている）。",
+            "集計対象を2〜3件だけ選び、電卓で合計して結果と比べます。",
+            "条件に使う文字に表記ゆれ（全角と半角、末尾の空白）がないか、フィルターの一覧で見ます。",
+          ],
+        },
+      ],
+      final: [
+        "集計の方法（合計・件数・平均など）が目的に合っている。",
+        "集計範囲がデータ全体を含んでいる。",
+        "空欄と重複の扱いを決めて、結果に反映した。",
+        "一部を手計算して、集計結果と照合した。",
+        "繰り返す集計なら、データを追加しても範囲が広がる方法にした。",
+      ],
+    },
+
+    "excel-format": {
+      groups: [
+        {
+          id: "use",
+          label: "表の用途",
+          choices: [
+            ["check", "数字を確認する"],
+            ["compare", "項目を比較する"],
+            ["input", "入力する"],
+            ["print", "印刷する"],
+          ],
+        },
+      ],
+      extra(sel) {
+        const lines = {
+          check: "表の用途は、数字の確認です。大事な数字がすぐ見つかるよう、数値の表示形式（桁区切り・単位）と配置（右揃え）を優先してください。",
+          compare: "表の用途は、項目の比較です。比べやすいよう、並び順と列の配置、見出しの固定を優先してください。",
+          input: "表の用途は、入力です。入力欄と計算欄の区別、入力規則（ドロップダウンなど）の使い方を優先し、入力ミスを防ぐ工夫も示してください。",
+          print: "表の用途は、印刷です。印刷範囲、改ページ、見出し行の繰り返し、用紙の向きを優先してください。",
+        };
+        return [
+          lines[sel.use] || "",
+          "色を使う場合は、色だけで意味が伝わらないよう、記号や文字も併用してください。データの値を変える操作と、見た目だけを整える操作は分けて示してください。",
+        ]
+          .filter(Boolean)
+          .join("\n");
+      },
+      example: {
+        before: {
+          lines: [
+            "架空の月次表：金額が「1500000」のように桁区切りなしで左揃え。",
+            "日付が「2026/4/1」と「4月1日」で混在している。",
+            "注意が必要な行を、赤い塗りつぶしだけで示している。",
+          ],
+        },
+        after: {
+          lines: [
+            "金額：表示形式で桁区切りを付け、見出しに「（円）」と単位を書き、右揃えにする（見た目の調整なので、値は変わらない）。",
+            "日付：表示形式を「2026/04/01」の形にそろえる。「4月1日」が文字として入っている行は、日付への変換が必要で、これは値の変更にあたるため別の作業として行う。",
+            "注意が必要な行：塗りつぶしに加えて「要確認」の列を作り、文字でも分かるようにする。",
+            "見出し行を固定し、スクロールしても項目名が見えるようにする。",
+          ],
+        },
+      },
+      issues: [
+        {
+          id: "find-number",
+          label: "大事な数字を探しにくい",
+          check: "表を見る人が、最初に確認する数字はどれか。",
+          change: "その列を見やすい位置に置き、合計行・太字・桁区切りで目立たせます。",
+          fix: "表の中で、大事な数字が探しにくいです。表を見る人が最初に確認すべき数字を私に確認したうえで、その数字が目立つよう、列の並び・合計行・太字・桁区切りなど、見た目だけの調整案を優先順位をつけて示してください。",
+        },
+        {
+          id: "units",
+          label: "単位や日付が分かりにくい",
+          check: "単位が見出しか表示形式に書かれているか。日付の書き方がそろっているか。日付が文字として入っていないか。",
+          change: "見出しに単位を入れ、表示形式で日付をそろえます。文字の日付は、別の作業として日付に変換します。",
+          fix: "表の単位や日付が分かりにくいです。単位を見出しや表示形式で示す方法と、日付の表示形式をそろえる方法を示してください。日付が文字として入力されている場合の見分け方と、その場合は値の変換が必要であることも、見た目の調整と分けて説明してください。",
+        },
+        {
+          id: "colors",
+          label: "色の意味が伝わらない",
+          check: "色の意味を説明する凡例があるか。白黒で印刷しても分かるか。",
+          change: "記号や文字（例：「要確認」）を併用し、凡例を付けます。",
+          fix: "表で使っている色の意味が伝わりません。色だけに頼らず、記号や文字（例：「要確認」）を併用する方法と、色の意味を示す凡例の付け方を示してください。色の数は必要最小限にする案にしてください。",
+        },
+        {
+          id: "print-cut",
+          label: "印刷すると切れる",
+          check: "印刷プレビューで、どの列・行が切れているか。",
+          change: "印刷範囲、用紙の向き、幅を1ページに合わせる設定、見出し行の繰り返しを見直します。",
+          fix: "表を印刷すると、列や文字が切れてしまいます。印刷プレビューで確かめる点と、印刷範囲の設定、用紙の向き、幅を1ページに合わせる設定、見出し行を各ページに印刷する設定の手順を示してください。文字が小さくなりすぎる場合の代わりの方法も示してください。",
+        },
+        { id: "ok", kind: "ok", label: "使いやすくなった" },
+        {
+          id: "unsure",
+          kind: "unsure",
+          label: "まだ判断がつかない",
+          examples: [
+            "表を見る人の立場で、最初に探す数字を1つ決め、すぐに見つかるか試します。",
+            "印刷プレビュー（「ファイル」→「印刷」）を開き、右端の列や最後の行が切れていないか見ます。",
+            "色の付いたセルについて、色がなくても文字だけで意味が分かるか確かめます。",
+          ],
+        },
+      ],
+      final: [
+        "表の用途（確認・比較・入力・印刷）に合う見た目になっている。",
+        "単位と日付の書き方がそろっている。",
+        "色だけでなく、文字や記号でも意味が伝わる。",
+        "値を変える作業と、見た目の調整を分けて行った。",
+        "印刷する場合は、印刷プレビューで切れていないことを確かめた。",
+      ],
+    },
+  };
+
+  function choiceLabel(group, value) {
+    const found = group.choices.find(([v]) => v === value);
+    return found ? found[1] : "未選択";
+  }
+
+  function isTentative(value) {
+    return !value || value === UNDECIDED;
+  }
+
+  function hasUndecided(group) {
+    return group.choices.some(([v]) => v === UNDECIDED);
+  }
+
+  // 書き出す条件：選んだもの、または「未定」を選べる条件（未選択でも仮置きとして書く）
+  function shownGroups(groups, sel) {
+    return groups.filter((g) => sel[g.id] || hasUndecided(g));
+  }
+
+  // 選んだ条件を指示文に書き出す。未定・未選択は仮置きと明記する。
+  function conditionBlock(title, groups, sel) {
+    if (!shownGroups(groups, sel).length) return "";
+    return (
+      "【" +
+      title +
+      "】\n" +
+      shownGroups(groups, sel)
+        .map((g) => "・" + g.label + "：" + choiceLabel(g, sel[g.id]) + (isTentative(sel[g.id]) ? "（仮置き）" : ""))
+        .join("\n")
+    );
+  }
+
+  function buildPrompt(card, sel) {
+    const extra = GUIDES[card.id].extra(sel || {});
+    return extra ? card.prompt + "\n\n" + extra : card.prompt;
+  }
+
+  function fixPrompt(cardId, issue, sel) {
+    return typeof issue.fix === "function" ? issue.fix(sel || {}) : issue.fix;
+  }
+
   // 表示順：目的 → 問い → 情報整理 → 根拠確認 → 骨子
   const AREAS = [
     {
@@ -241,15 +1100,17 @@
   // ---------------------------------------------------------------------------
 
   const STORAGE_KEY = "research-report-guide";
-  const SCHEMA_VERSION = 1;
+  // 2：ガイドの進み具合（progress）を追加。1 の保存データはそのまま読み込める。
+  const SCHEMA_VERSION = 2;
+  const READABLE_VERSIONS = [1, 2];
 
   function emptyData() {
-    return { schemaVersion: SCHEMA_VERSION, favorites: [], practice: {}, latestResult: null };
+    return { schemaVersion: SCHEMA_VERSION, favorites: [], practice: {}, latestResult: null, progress: {}, seq: 0 };
   }
 
   // 保存データを検証し、想定外の値は取り除く。形が壊れていれば null を返す。
   function sanitize(raw) {
-    if (!raw || typeof raw !== "object" || raw.schemaVersion !== SCHEMA_VERSION) return null;
+    if (!raw || typeof raw !== "object" || !READABLE_VERSIONS.includes(raw.schemaVersion)) return null;
     const data = emptyData();
     if (Array.isArray(raw.favorites)) {
       data.favorites = raw.favorites.filter((id, i, arr) => CARD_BY_ID[id] && arr.indexOf(id) === i);
@@ -265,7 +1126,36 @@
       });
     }
     data.latestResult = sanitizeResult(raw.latestResult);
+    data.progress = sanitizeProgress(raw.progress);
+    const touched = Object.values(data.progress).map((p) => p.touched);
+    data.seq = Math.max(Number.isInteger(raw.seq) && raw.seq > 0 ? raw.seq : 0, 0, ...touched);
     return data;
+  }
+
+  // ガイドごとの進み具合：ステップ番号・選んだ状況・気になる点・確認リストの印だけを保存する
+  function sanitizeProgress(raw) {
+    const out = {};
+    if (!raw || typeof raw !== "object") return out;
+    Object.keys(raw).forEach((id) => {
+      const guide = GUIDES[id];
+      const p = raw[id];
+      if (!guide || !CARD_BY_ID[id] || !p || typeof p !== "object") return;
+      const sel = {};
+      guide.groups.forEach((g) => {
+        const v = p.sel && p.sel[g.id];
+        if (g.choices.some(([c]) => c === v)) sel[g.id] = v;
+      });
+      out[id] = {
+        step: Number.isInteger(p.step) && p.step >= 1 && p.step <= GUIDE_STEPS.length ? p.step : 1,
+        sel,
+        issue: guide.issues.some((i) => i.id === p.issue) ? p.issue : null,
+        checks: Array.isArray(p.checks)
+          ? p.checks.filter((n, i, a) => Number.isInteger(n) && n >= 0 && n < guide.final.length && a.indexOf(n) === i)
+          : [],
+        touched: Number.isInteger(p.touched) && p.touched > 0 ? p.touched : 0,
+      };
+    });
+    return out;
   }
 
   function sanitizeResult(r) {
@@ -293,7 +1183,7 @@
       } catch (e) {
         this.available = false;
         showStorageNotice(
-          "この環境ではブラウザー内に保存できません。カードの閲覧と5問のチェックは利用できますが、お気に入りや記録はページを閉じると消えます。"
+          "この環境ではブラウザー内に保存できません。ガイドと5問のチェックは利用できますが、お気に入り・記録・ガイドの進み具合はページを閉じると消えます。"
         );
         return;
       }
@@ -372,6 +1262,33 @@
       this.data.latestResult = null;
       return this.save();
     },
+    progressOf(id) {
+      return this.data.progress[id] || null;
+    },
+    updateProgress(id, next) {
+      this.data.seq += 1;
+      this.data.progress[id] = {
+        step: next.step,
+        sel: Object.assign({}, next.sel),
+        issue: next.issue || null,
+        checks: (next.checks || []).slice(),
+        touched: this.data.seq,
+      };
+      return this.save();
+    },
+    clearProgress(id) {
+      delete this.data.progress[id];
+      return this.save();
+    },
+    // 直近に操作したガイド
+    latestProgress() {
+      let best = null;
+      Object.keys(this.data.progress).forEach((id) => {
+        const p = this.data.progress[id];
+        if (!best || p.touched > best.progress.touched) best = { id, progress: p };
+      });
+      return best;
+    },
   };
 
   function todayString() {
@@ -432,6 +1349,11 @@
     view: "home", // home | category | card | quizIntro | quiz | result | data | paid
     categoryId: null,
     cardId: null,
+    step: 1, // ガイドの表示中のステップ
+    resumed: false, // 保存した続きから開いたか
+    completed: false, // ガイドを完了した直後か
+    promptUpdated: false, // 状況を変えて指示文が変わったか
+    lastCopied: {}, // カードごとに最後にコピーした指示文（メモリのみ）
     cardFrom: null, // カードを開いた元の画面（"result" のとき「結果に戻る」を出す）
     quiz: null, // { questionIds, answers, index }
     resultSource: "current", // current | saved
@@ -443,7 +1365,7 @@
   // URL は変えずに、ブラウザーの戻る操作で画面を戻れるようにする。
   // history.state には画面名・カードID・設問番号だけを入れ、回答内容は入れない。
   function navigate(view, extra) {
-    Object.assign(state, { view, showAlternatives: false, confirmDelete: false, quizError: false }, extra || {});
+    Object.assign(state, { view, showAlternatives: false, confirmDelete: false, quizError: false, completed: false }, extra || {});
     try {
       history.pushState(historyEntry(), "");
     } catch (e) {
@@ -459,6 +1381,7 @@
       categoryId: state.categoryId,
       cardId: state.cardId,
       cardFrom: state.cardFrom,
+      step: state.step,
       quizIndex: state.quiz ? state.quiz.index : null,
       resultSource: state.resultSource,
     };
@@ -474,8 +1397,15 @@
         categoryId: s.categoryId,
         cardId: s.cardId,
         cardFrom: s.cardFrom,
+        step: Number.isInteger(s.step) && s.step >= 1 && s.step <= GUIDE_STEPS.length ? s.step : 1,
+        resumed: false,
         resultSource: s.resultSource || "current",
       });
+      // ブラウザーの戻る・進むでステップを移動したときも、保存済みの進み具合に反映する
+      if (state.view === "card" && store.progressOf(state.cardId)) {
+        const p = store.progressOf(state.cardId);
+        store.updateProgress(state.cardId, Object.assign({}, p, { step: state.step }));
+      }
       if (state.quiz && typeof s.quizIndex === "number") state.quiz.index = s.quizIndex;
     }
     // 再読み込み後などで診断の状態がメモリにない場合は、開始画面に戻す
@@ -487,7 +1417,7 @@
     }
     if (state.view === "card" && !CARD_BY_ID[state.cardId]) state.view = "home";
     if (state.view === "category" && !CATEGORY_BY_ID[state.categoryId]) state.view = "home";
-    Object.assign(state, { showAlternatives: false, confirmDelete: false, quizError: false });
+    Object.assign(state, { showAlternatives: false, confirmDelete: false, quizError: false, completed: false });
     render();
   });
 
@@ -507,7 +1437,7 @@
         else el.setAttribute(key, value === true ? "" : value);
       });
     }
-    children.flat().forEach((child) => {
+    children.flat(Infinity).forEach((child) => {
       if (child === null || child === undefined || child === false) return;
       el.appendChild(typeof child === "string" ? document.createTextNode(child) : child);
     });
@@ -607,6 +1537,7 @@
         h("h1", { class: "page-title", text: "今日は、どのお仕事を進めますか？" }),
         h("p", { class: "lead", text: "お仕事の種類を選ぶと、困りごとごとに、次に試せる行動と生成AIに渡せる指示文が見つかります。" })
       ),
+      resumeSection(),
       h(
         "ul",
         { class: "entry-list", "aria-label": "お仕事の種類" },
@@ -674,6 +1605,35 @@
     );
   }
 
+  // 直近に操作したガイドを1つだけ表示する。完了したガイドは表示しない。
+  function resumeSection() {
+    const latest = store.latestProgress();
+    if (!latest) return null;
+    const card = CARD_BY_ID[latest.id];
+    const step = latest.progress.step;
+    return h(
+      "section",
+      { class: "resume", "aria-labelledby": "resume-heading" },
+      h("h2", { id: "resume-heading", class: "h-sub", text: "前回の続きから" }),
+      h("p", { class: "resume__category", text: CATEGORY_BY_ID[card.category].title }),
+      h("p", { class: "resume__title", text: card.title }),
+      h("p", { class: "small muted", text: "ステップ" + step + "／" + GUIDE_STEPS.length + "：" + GUIDE_STEPS[step - 1] }),
+      h(
+        "div",
+        { class: "btn-row" },
+        button("続きから再開", () => openCard(card.id, "home"), { class: "btn btn--primary", "data-resume": "" }),
+        button(
+          "最初から",
+          () => {
+            store.clearProgress(card.id);
+            openCard(card.id, "home");
+          },
+          { class: "btn btn--ghost", "data-resume-restart": "" }
+        )
+      )
+    );
+  }
+
   function openCategory(categoryId) {
     navigate("category", { categoryId });
   }
@@ -730,8 +1690,17 @@
     );
   }
 
+  // 保存した進み具合があれば、そのステップから開く
   function openCard(cardId, from) {
-    navigate("card", { cardId, cardFrom: from, categoryId: CARD_BY_ID[cardId].category });
+    const saved = store.progressOf(cardId);
+    navigate("card", {
+      cardId,
+      cardFrom: from,
+      categoryId: CARD_BY_ID[cardId].category,
+      step: saved ? saved.step : 1,
+      resumed: !!saved,
+      promptUpdated: false,
+    });
   }
 
   // トップと所属カテゴリの両方へ戻れるパンくず
@@ -751,43 +1720,157 @@
   }
 
   // ---------------------------------------------------------------------------
-  // 画面：実用カード
+  // 画面：実用ガイド（6ステップ）
   // ---------------------------------------------------------------------------
 
-  function viewCard() {
-    const card = CARD_BY_ID[state.cardId];
-    const fav = store.isFavorite(card.id);
-    const practice = store.practiceOf(card.id);
-    const promptId = "prompt-" + card.id;
+  // 進み具合は、操作（ステップ移動・条件の選択など）をしたときだけ保存する
+  function guideState(cardId) {
+    const saved = store.progressOf(cardId);
+    return saved || { step: 1, sel: {}, issue: null, checks: [] };
+  }
 
-    const promptBox = h("p", { id: promptId, class: "prompt__text", text: card.prompt });
-    const copyStatus = h("div", { class: "copy-status", role: "status" });
+  function updateGuide(cardId, patch) {
+    const cur = guideState(cardId);
+    return store.updateProgress(cardId, Object.assign({ step: state.step, sel: cur.sel, issue: cur.issue, checks: cur.checks }, patch));
+  }
+
+  function goStep(n) {
+    updateGuide(state.cardId, { step: n });
+    navigate("card", { step: n, resumed: false });
+  }
+
+  function promptBlock(opts) {
+    const textEl = h("p", { id: opts.id, class: "prompt__text", text: opts.text });
+    const status = h("div", { class: "copy-status", role: "status" });
 
     async function onCopy() {
-      const ok = await copyText(card.prompt);
-      copyStatus.replaceChildren();
+      const ok = await copyText(opts.text);
+      status.replaceChildren();
       if (ok) {
-        copyStatus.className = "copy-status copy-status--ok";
-        copyStatus.append(
-          h("strong", { text: "指示文をコピーしました。" }),
-          h("span", { class: "copy-status__next", text: "次に：" + card.nextStep }),
+        if (opts.onCopied) opts.onCopied();
+        status.className = "copy-status copy-status--ok";
+        status.append(
+          h("strong", { text: (opts.copiedLabel || "指示文") + "をコピーしました。" }),
+          h("span", { class: "copy-status__next", text: "次に：" + opts.nextStep }),
           h("span", { class: "copy-status__note", text: "個人情報や社外秘の情報は書き足さないでください。" })
         );
       } else {
-        copyStatus.className = "copy-status copy-status--error";
-        copyStatus.append(
+        status.className = "copy-status copy-status--error";
+        status.append(
           h("strong", { text: "自動でコピーできませんでした。" }),
           " 指示文の全文を選択しました。パソコンでは Ctrl+C（Mac は ⌘+C）、スマートフォンでは選択範囲を長押ししてコピーしてください。",
           h(
             "div",
             { class: "btn-row" },
-            button("指示文をもう一度選択する", () => selectElementText(promptBox), { class: "btn btn--ghost btn--small" })
+            button("指示文をもう一度選択する", () => selectElementText(textEl), { class: "btn btn--ghost btn--small" })
           )
         );
-        selectElementText(promptBox);
-        promptBox.focus();
+        selectElementText(textEl);
+        textEl.parentElement.focus();
       }
     }
+
+    return h(
+      "section",
+      { class: "prompt", "aria-labelledby": opts.id + "-label" },
+      h("h3", { id: opts.id + "-label", text: opts.label }),
+      h("div", { class: "prompt__box", tabindex: "0", role: "group", "aria-labelledby": opts.id + "-label" }, textEl),
+      h("div", { class: "btn-row" }, button(opts.copyLabel || "指示文をコピー", onCopy, { class: "btn btn--primary", "data-copy": "" })),
+      status
+    );
+  }
+
+  function stepper(current) {
+    return h(
+      "nav",
+      { class: "stepper", "aria-label": "ガイドの手順" },
+      h(
+        "ol",
+        { class: "stepper__list" },
+        GUIDE_STEPS.map((name, i) =>
+          h(
+            "li",
+            null,
+            h(
+              "button",
+              {
+                type: "button",
+                class: "stepper__btn",
+                "aria-current": current === i + 1 ? "step" : null,
+                "data-step": String(i + 1),
+                onclick: () => goStep(i + 1),
+              },
+              h("span", { class: "stepper__num", "aria-hidden": "true", text: String(i + 1) }),
+              h("span", { class: "stepper__name" }, h("span", { class: "visually-hidden", text: "ステップ" + (i + 1) + "：" }), name)
+            )
+          )
+        )
+      )
+    );
+  }
+
+  function stepNav(step, nextLabel) {
+    return h(
+      "div",
+      { class: "btn-row step-nav" },
+      step > 1 ? button("← 前へ", () => goStep(step - 1), { class: "btn btn--ghost" }) : null,
+      step < GUIDE_STEPS.length
+        ? button(nextLabel || "次へ：" + GUIDE_STEPS[step] + " →", () => goStep(step + 1), { class: "btn btn--primary", "data-next": "" })
+        : null
+    );
+  }
+
+  function stepHeading(step) {
+    return h(
+      "h2",
+      { class: "step-title", "data-focus": "", tabindex: "-1" },
+      h("span", { class: "step-title__num", text: "ステップ" + step + "／" + GUIDE_STEPS.length }),
+      GUIDE_STEPS[step - 1]
+    );
+  }
+
+  function selectionSummary(guide, sel) {
+    if (!guide.groups.length) return null;
+    const chosen = guide.groups.filter((g) => sel[g.id]);
+    if (!chosen.length) return h("p", { class: "small muted", text: "状況はまだ選んでいません。選ばなくても指示文は使えます。" });
+    return h(
+      "p",
+      { class: "selection-summary" },
+      "選んだ状況：",
+      shownGroups(guide.groups, sel)
+        .map((g) => g.label + "＝" + choiceLabel(g, sel[g.id]) + (isTentative(sel[g.id]) ? "（仮置き）" : ""))
+        .join("／")
+    );
+  }
+
+  function radioGroup(name, legend, choices, current, onPick, extraClass) {
+    return h(
+      "fieldset",
+      { class: "choice-group" + (extraClass ? " " + extraClass : "") },
+      h("legend", { text: legend }),
+      h(
+        "div",
+        { class: "choice-row" },
+        choices.map(([value, label]) =>
+          h(
+            "label",
+            { class: "chip" },
+            h("input", { type: "radio", name, value, checked: current === value, onchange: () => onPick(value) }),
+            h("span", { text: label })
+          )
+        )
+      )
+    );
+  }
+
+  function viewCard() {
+    const card = CARD_BY_ID[state.cardId];
+    const guide = GUIDES[card.id];
+    const gs = guideState(card.id);
+    const step = state.step || 1;
+    const fav = store.isFavorite(card.id);
+    const practice = store.practiceOf(card.id);
+    const prompt = buildPrompt(card, gs.sel);
 
     function onFavorite() {
       const saved = store.toggleFavorite(card.id);
@@ -816,6 +1899,274 @@
       announce("感想「" + FEEDBACK.find((f) => f.value === value).label + "」を記録しました。");
     }
 
+    function restart() {
+      store.clearProgress(card.id);
+      Object.assign(state, { step: 1, resumed: false, completed: false, promptUpdated: false });
+      render();
+      announce("最初から始めます。");
+    }
+
+    const mainPromptOpts = {
+      id: "prompt-" + card.id,
+      label: "コピーできる指示文",
+      text: prompt,
+      nextStep: card.nextStep,
+      onCopied: () => {
+        state.lastCopied[card.id] = prompt;
+        state.promptUpdated = false;
+      },
+    };
+
+    // --- ステップ1：状況を選ぶ ---
+    function situationStep() {
+      const updateStatus = h("p", { class: "update-status", role: "status", "data-update-status": "" });
+      if (state.promptUpdated) updateStatus.textContent = "条件に合わせて指示文を更新しました。ステップ2で確認できます。";
+      const hasUndecided = guide.groups.some((g) => g.choices.some(([v]) => v === UNDECIDED));
+      const tentativeNote = h("p", {
+        class: "small muted",
+        "data-tentative-note": "",
+        text: "「未定」や、選んでいない条件は「仮置き」として指示文に書き込み、AIには決めつけずに候補を示すよう伝えます。",
+      });
+      tentativeNote.hidden = !(hasUndecided && guide.groups.some((g) => g.choices.some(([v]) => v === UNDECIDED) && isTentative(gs.sel[g.id])));
+
+      return [
+        h("p", { text: "近いものを選んでください。選んだ内容に合わせて、次のステップの指示文が変わります。あとから変更することもできます。" }),
+        guide.groups.map((g) =>
+          radioGroup("sel-" + g.id, g.label, g.choices, gs.sel[g.id], (value) => {
+            const sel = Object.assign({}, guideState(card.id).sel, { [g.id]: value });
+            updateGuide(card.id, { sel });
+            state.promptUpdated = true;
+            updateStatus.textContent = "条件に合わせて指示文を更新しました。ステップ2で確認できます。";
+            tentativeNote.hidden = !(hasUndecided && guide.groups.some((gr) => gr.choices.some(([v]) => v === UNDECIDED) && isTentative(sel[gr.id])));
+          })
+        ),
+        tentativeNote,
+        updateStatus,
+      ];
+    }
+
+    // --- ステップ2：進め方と指示文を見る ---
+    function promptStep() {
+      const copiedBefore = state.lastCopied[card.id];
+      return [
+        h("h3", { class: "card__heading", text: RESULT_HEADING }),
+        h("p", { class: "card__action", text: card.action }),
+        h(
+          "div",
+          { class: "selection-row" },
+          selectionSummary(guide, gs.sel),
+          guide.groups.length ? button("状況を変える", () => goStep(1), { class: "btn btn--ghost btn--small" }) : null
+        ),
+        state.promptUpdated
+          ? h("p", { class: "update-status", role: "status", text: "選んだ状況に合わせて、指示文を更新しました。" })
+          : null,
+        copiedBefore && copiedBefore !== prompt
+          ? h("p", { class: "notice notice--warn small", text: "前回コピーした後に状況を変えたため、指示文が変わっています。もう一度コピーしてください。" })
+          : null,
+        promptBlock(mainPromptOpts),
+      ];
+    }
+
+    // --- ステップ3：普段の生成AIで試す ---
+    function tryStep() {
+      return [
+        h(
+          "ol",
+          { class: "try-steps" },
+          h("li", { text: "下の「指示文をコピー」を押します。" }),
+          h("li", { text: "普段お使いの生成AI（職場で利用が認められたもの）に貼り付けて送ります。" }),
+          h("li", { text: card.nextStep }),
+          h("li", { text: "回答が出たら、このページに戻り「ステップ4：見本と確認ポイント」へ進みます。" })
+        ),
+        h("p", {
+          class: "notice notice--info small",
+          text: "このアプリから生成AIへ自動で送信することはありません。AIの回答や資料を、このアプリに入力する必要もありません。",
+        }),
+        promptBlock(Object.assign({}, mainPromptOpts, { id: "prompt-try-" + card.id })),
+      ];
+    }
+
+    // --- ステップ4：見本と確認ポイント ---
+    function exampleStep() {
+      const ex = guide.example;
+      const exampleBox = (title, lines, cls) =>
+        h("div", { class: "example " + cls }, h("h4", { text: title }), h("ul", null, lines.map((t) => h("li", { text: t }))));
+      return [
+        h(
+          "section",
+          { class: "examples", "aria-labelledby": "example-heading" },
+          h("h3", { id: "example-heading", text: "見本（架空の例）" }),
+          h("p", { class: "small muted", text: ex.note || "架空の題材による例です。実在の資料や数字を示すものではありません。" }),
+          ex.table
+            ? h(
+                "div",
+                { class: "table-wrap", tabindex: "0", role: "region", "aria-label": ex.table.caption },
+                h(
+                  "table",
+                  { class: "compare compare--example" },
+                  h("caption", { text: ex.table.caption }),
+                  h("thead", null, h("tr", null, ex.table.head.map((c) => h("th", { scope: "col", text: c })))),
+                  h(
+                    "tbody",
+                    null,
+                    ex.table.rows.map((r) => h("tr", null, h("th", { scope: "row", text: r[0] }), r.slice(1).map((c) => h("td", { text: c }))))
+                  )
+                )
+              )
+            : null,
+          h(
+            "div",
+            { class: "example-pair" },
+            exampleBox("見直す前（架空の例）", ex.before.lines, "example--before"),
+            exampleBox("改善例（架空の例）", ex.after.lines, "example--after")
+          )
+        ),
+        h(
+          "section",
+          { class: "checkpoints", "aria-labelledby": "check-label" },
+          h("h3", { id: "check-label", text: "回答を見るポイント" }),
+          h("ul", null, card.check.map((c) => h("li", { text: c })))
+        ),
+        h("p", { class: "small", text: "気になる点があればステップ5へ。問題がなければ、そのまま最後のチェックに進めます。" }),
+        h("div", { class: "btn-row" }, button("問題がなければ：最後のチェックへ", () => goStep(6), { class: "btn btn--ghost btn--small", "data-skip-to-final": "" })),
+      ];
+    }
+
+    // --- ステップ5：気になる点と修正方法 ---
+    function issueStep() {
+      const okIssue = guide.issues.find((i) => i.kind === "ok");
+      const selected = guide.issues.find((i) => i.id === gs.issue) || null;
+      let panel = null;
+      if (selected && selected.kind === "ok") {
+        panel = h(
+          "div",
+          { class: "issue-panel issue-panel--ok" },
+          h("p", { text: OK_LEAD }),
+          button("最後のチェックへ →", () => goStep(6), { class: "btn btn--primary" })
+        );
+      } else if (selected && selected.kind === "unsure") {
+        panel = h(
+          "div",
+          { class: "issue-panel" },
+          h("p", { text: UNSURE_LEAD }),
+          h("ul", null, selected.examples.map((t) => h("li", { text: t }))),
+          h("p", { class: "small", text: "近いものが見つかったら、上の選択肢から選び直してください。見本と比べてみるのも手がかりになります。" }),
+          button("見本と確認ポイントをもう一度見る", () => goStep(4), { class: "btn btn--ghost btn--small" })
+        );
+      } else if (selected) {
+        panel = h(
+          "div",
+          { class: "issue-panel" },
+          h("h3", { text: selected.label }),
+          h(
+            "dl",
+            { class: "issue-detail" },
+            h("dt", { text: "確認すること" }),
+            h("dd", { text: selected.check }),
+            h("dt", { text: "変えること" }),
+            h("dd", { text: selected.change })
+          ),
+          promptBlock({
+            id: "fix-" + card.id,
+            label: "修正用の指示文",
+            text: fixPrompt(card.id, selected, gs.sel),
+            nextStep: FIX_NEXT_STEP,
+            copyLabel: "修正用の指示文をコピー",
+            copiedLabel: "修正用の指示文",
+          }),
+          h(
+            "div",
+            { class: "btn-row" },
+            button("修正後の回答を見直す（ステップ4）", () => goStep(4), { class: "btn btn--ghost btn--small" }),
+            button("最後のチェックへ", () => goStep(6), { class: "btn btn--ghost btn--small" })
+          )
+        );
+      }
+      return [
+        h("p", {
+          text: "AIの回答を見て、近いものを1つ選んでください。直したい点がなければ「" + okIssue.label + "」を選べば、そのまま完了に進めます。",
+        }),
+        radioGroup(
+          "issue-" + card.id,
+          "気になる点",
+          guide.issues.map((i) => [i.id, i.label]),
+          gs.issue,
+          (value) => {
+            updateGuide(card.id, { issue: value });
+            rerender('input[name="issue-' + card.id + '"][value="' + value + '"]');
+          },
+          "choice-group--stack"
+        ),
+        panel,
+      ];
+    }
+
+    // --- ステップ6：最後のチェック ---
+    function finalStep() {
+      if (state.completed) {
+        return [
+          h(
+            "div",
+            { class: "issue-panel issue-panel--ok", "data-completed": "" },
+            h("p", { class: "complete-title", text: "このガイドを完了しました。" }),
+            h("p", {
+              class: "small",
+              text: "「試してみた」に記録しました（このブラウザー内のみ）。感想は下で選べます（任意）。トップの「前回の続きから」には表示されなくなります。",
+            }),
+            h(
+              "div",
+              { class: "btn-row" },
+              button("最初からもう一度", restart, { class: "btn btn--ghost btn--small" }),
+              button("「" + CATEGORY_BY_ID[card.category].title + "」に戻る", () => openCategory(card.category), { class: "btn btn--ghost btn--small" }),
+              button("トップへ", () => navigate("home"), { class: "btn btn--ghost btn--small" })
+            )
+          ),
+        ];
+      }
+      return [
+        h("p", { text: "当てはまるものに印を付けてください（任意）。すべてそろわなくても完了できます。" }),
+        h(
+          "fieldset",
+          { class: "choice-group final-check" },
+          h("legend", { text: "最後の確認リスト" }),
+          guide.final.map((t, i) =>
+            h(
+              "label",
+              { class: "check-item" },
+              h("input", {
+                type: "checkbox",
+                checked: gs.checks.includes(i),
+                onchange: (e) => {
+                  const checks = guideState(card.id).checks.filter((n) => n !== i);
+                  if (e.target.checked) checks.push(i);
+                  updateGuide(card.id, { checks: checks.sort() });
+                },
+              }),
+              h("span", { text: t })
+            )
+          )
+        ),
+        h(
+          "div",
+          { class: "btn-row" },
+          button(
+            "このガイドを完了する",
+            () => {
+              store.clearProgress(card.id);
+              if (!store.practiceOf(card.id)) store.setTried(card.id, true);
+              state.completed = true;
+              rerender("[data-completed]");
+              announce("このガイドを完了しました。");
+            },
+            { class: "btn btn--primary", "data-complete": "" }
+          )
+        ),
+      ];
+    }
+
+    const STEP_VIEWS = [situationStep, promptStep, tryStep, exampleStep, issueStep, finalStep];
+    const saved = store.progressOf(card.id);
+
     return h(
       "div",
       { class: "view view-card" },
@@ -823,34 +2174,24 @@
         card.category,
         state.cardFrom === "result" ? button("← 結果に戻る", () => history.back(), { class: "link-button" }) : null
       ),
-      h("p", { class: "card-kicker", text: CATEGORY_BY_ID[card.category].title + "の困りごと" }),
+      h("p", { class: "card-kicker", text: CATEGORY_BY_ID[card.category].title + "のガイド" }),
       h("h1", { class: "page-title page-title--card", text: card.title }),
+      state.resumed && saved
+        ? h(
+            "div",
+            { class: "resume-note" },
+            h("p", { text: "前回の続き（ステップ" + step + "：" + GUIDE_STEPS[step - 1] + "）から表示しています。" }),
+            button("最初からやり直す", restart, { class: "btn btn--ghost btn--small", "data-restart": "" })
+          )
+        : null,
+      stepper(step),
 
       h(
         "article",
-        { class: "card", "aria-labelledby": "card-next" },
-        h("h2", { id: "card-next", class: "card__heading", text: RESULT_HEADING }),
-        h("p", { class: "card__action", text: card.action }),
-
-        h(
-          "section",
-          { class: "prompt", "aria-labelledby": "prompt-label" },
-          h("h3", { id: "prompt-label", text: "コピーできる指示文" }),
-          h("div", { class: "prompt__box", tabindex: "0", role: "group", "aria-labelledby": "prompt-label" }, promptBox),
-          h(
-            "div",
-            { class: "btn-row" },
-            button("指示文をコピー", onCopy, { class: "btn btn--primary", "data-copy": "" })
-          ),
-          copyStatus
-        ),
-
-        h(
-          "section",
-          { class: "checkpoints", "aria-labelledby": "check-label" },
-          h("h3", { id: "check-label", text: "回答を見るポイント" }),
-          h("ul", null, card.check.map((c) => h("li", { text: c })))
-        ),
+        { class: "card", "aria-labelledby": "step-heading-" + step },
+        Object.assign(stepHeading(step), { id: "step-heading-" + step }),
+        STEP_VIEWS[step - 1](),
+        stepNav(step),
 
         h(
           "div",
@@ -865,7 +2206,11 @@
             "aria-pressed": practice ? "true" : "false",
             "data-tried": "",
           }),
-          button("ほかの困りごとを見る", toggleAlternatives, { class: "btn btn--ghost", "aria-expanded": state.showAlternatives ? "true" : "false", "data-alt": "" })
+          button("ほかの困りごとを見る", toggleAlternatives, {
+            class: "btn btn--ghost",
+            "aria-expanded": state.showAlternatives ? "true" : "false",
+            "data-alt": "",
+          })
         ),
 
         practice ? feedbackFieldset(card.id, practice, onFeedback, toggleAlternatives) : null
@@ -1308,6 +2653,7 @@
           "ul",
           null,
           h("li", { text: "お気に入りに保存したカード（現在 " + d.favorites.length + " 件）" }),
+          h("li", { text: "ガイドの進み具合：表示中のステップ、選んだ状況、気になる点、確認リストの印（現在 " + Object.keys(d.progress).length + " 件）" }),
           h("li", { text: "カードごとの「試してみた」と、任意で選んだ感想（現在 " + triedCount + " 件、うち感想 " + feedbackCount + " 件）" }),
           h("li", { text: "保存を選んだ最新の診断結果（現在 " + (d.latestResult ? "1 件" : "なし") + "）" })
         ),
@@ -1331,7 +2677,7 @@
           ? h(
               "div",
               { role: "group", "aria-labelledby": "confirm-text" },
-              h("p", { id: "confirm-text", class: "field-error", text: "お気に入り・実践記録・保存した結果をすべて削除します。元に戻せません。よろしいですか？" }),
+              h("p", { id: "confirm-text", class: "field-error", text: "お気に入り・実践記録・ガイドの進み具合・保存した結果をすべて削除します。元に戻せません。よろしいですか？" }),
               h(
                 "div",
                 { class: "btn-row" },
@@ -1361,7 +2707,7 @@
     const rows = [
       ["使える範囲", "アプリ内の無料機能を、今すぐすべて使えます", "準備中のため、まだ使えません"],
       ["カテゴリ", "情報収集・報告書づくり／Excel作業", "追加カテゴリを構想中"],
-      ["作業ガイド", "困りごとごとの実用カード（共通の内容）", "選んだ条件に合わせた作業ガイドを構想中"],
+      ["作業ガイド", "8本の選択式ガイド（目的・相手・用途などの基本的な状況を選べます）", "より細かな状況に合わせた作業ガイドを構想中"],
     ];
     return h(
       "div",
@@ -1377,10 +2723,10 @@
       h(
         "section",
         { class: "section" },
-        h("h2", { class: "h-sub", text: "構想1：条件に合わせた作業ガイド" }),
+        h("h2", { class: "h-sub", text: "構想1：より細かな条件に合わせた作業ガイド" }),
         h("p", {
           text:
-            "報告の種類や頻度、Excelでの作業の種類などを選択肢から選ぶと、その条件に合わせた手順と指示文の組み合わせを案内する構想です。無料版のカードは、どなたにも同じ内容を表示します。",
+            "無料版のガイドでは、目的・相手・用途などの基本的な状況を選べます。有料版では、より細かな条件に合わせた手順と指示文の組み合わせを案内する構想です。",
         })
       ),
       h(
@@ -1457,5 +2803,15 @@
   main.replaceChildren(viewHome());
 
   // テスト用に純粋関数だけを公開する（通信や保存は行わない）
-  window.__researchGuide = { computeResult, drawQuestions, AREAS, SCHEMA_VERSION, STORAGE_KEY };
+  window.__researchGuide = {
+    computeResult,
+    drawQuestions,
+    AREAS,
+    SCHEMA_VERSION,
+    STORAGE_KEY,
+    GUIDES,
+    GUIDE_STEPS,
+    buildPrompt: (cardId, sel) => buildPrompt(CARD_BY_ID[cardId], sel),
+    fixPrompt: (cardId, issueId, sel) => fixPrompt(cardId, GUIDES[cardId].issues.find((i) => i.id === issueId), sel),
+  };
 })();

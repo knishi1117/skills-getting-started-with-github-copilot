@@ -427,6 +427,7 @@ main:focus {
 
 .prompt__text {
   margin: 0;
+  white-space: pre-wrap;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -803,4 +804,271 @@ progress {
   .hero {
     padding: 28px 24px 8px;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   選択式ガイド（6ステップ）
+   --------------------------------------------------------------------------- */
+.stepper {
+  margin: 8px 0 4px;
+}
+
+.stepper__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.stepper__btn {
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  text-align: left;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.stepper__btn:hover {
+  border-color: var(--primary);
+}
+
+.stepper__btn[aria-current="step"] {
+  border: 2px solid var(--primary);
+  background: var(--primary-soft);
+  font-weight: 700;
+}
+
+.stepper__num {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.stepper__btn[aria-current="step"] .stepper__num {
+  background: var(--primary);
+  color: var(--primary-text);
+}
+
+@media (min-width: 720px) {
+  .stepper__list {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+.step-title {
+  font-size: 1.15rem;
+}
+
+.step-title__num {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.step-nav {
+  justify-content: space-between;
+  margin-top: 24px;
+}
+
+.choice-group {
+  border: 0;
+  padding: 0;
+  margin: 0 0 16px;
+}
+
+.choice-group legend {
+  font-weight: 700;
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.choice-group--stack .choice-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.choice-group--stack .chip {
+  border-radius: 8px;
+}
+
+.update-status:empty {
+  display: none;
+}
+
+.update-status {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--ok-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.selection-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.selection-row p {
+  margin: 0;
+}
+
+.selection-summary {
+  font-size: 0.9rem;
+}
+
+.try-steps li {
+  margin-bottom: 6px;
+}
+
+.example-pair {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+@media (min-width: 720px) {
+  .example-pair {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.example {
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 0.92rem;
+}
+
+.example h4 {
+  font-size: 0.9rem;
+}
+
+.example ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.example--before {
+  background: var(--prompt-bg);
+}
+
+.example--after {
+  background: var(--ok-soft);
+}
+
+.compare--example caption {
+  text-align: left;
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding-bottom: 4px;
+}
+
+.issue-panel {
+  margin-top: 8px;
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: var(--prompt-bg);
+}
+
+.issue-panel--ok {
+  background: var(--ok-soft);
+}
+
+.issue-detail dt {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.issue-detail dd {
+  margin: 0 0 10px;
+}
+
+.check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 0;
+  cursor: pointer;
+}
+
+.check-item input {
+  width: 20px;
+  height: 20px;
+  margin: 4px 0 0;
+  flex: none;
+  accent-color: var(--primary);
+}
+
+.check-item:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.complete-title {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.resume-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  font-size: 0.9rem;
+}
+
+.resume-note p {
+  margin: 0;
+}
+
+.resume {
+  margin: 0 0 20px;
+  padding: 16px;
+  border: 1px solid var(--card-border);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--card-shadow);
+}
+
+.resume p {
+  margin: 0;
+}
+
+.resume__category {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.resume__title {
+  font-weight: 700;
 }

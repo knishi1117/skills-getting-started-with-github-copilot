@@ -58,6 +58,7 @@ async function answerQuiz(page, values) {
 }
 
 const openCategory = (page, id) => page.locator(`[data-category="${id}"]`).click();
+const toStep = (page, n) => page.locator(`[data-step="${n}"]`).click();
 
 async function storedData(page) {
   return page.evaluate((k) => JSON.parse(localStorage.getItem(k) || "null"), KEY);
@@ -109,11 +110,15 @@ async function storedData(page) {
       }
     });
 
-    await step("入口から実用カードを直接表示し、共通構成がそろう", async () => {
+    await step("入口からガイドを表示し、6ステップと共通構成がそろう", async () => {
       await page.getByRole("button", { name: /報告書の流れが、決まらない/ }).click();
+      assert.strictEqual(await page.locator(".stepper__btn").count(), 6);
+      assert.strictEqual(await page.locator('[aria-current="step"]').getAttribute("data-step"), "1");
+      await toStep(page, 4);
+      await page.getByRole("heading", { name: "回答を見るポイント" }).waitFor();
+      await toStep(page, 2);
       await page.getByRole("heading", { name: "次のお仕事で試せそうなこと" }).waitFor();
       await page.getByText("見出しごとに「ここで何を伝えるか」を一文添えてみましょう。").waitFor();
-      await page.getByRole("heading", { name: "回答を見るポイント" }).waitFor();
       for (const name of ["指示文をコピー", "☆ お気に入りに保存", "試してみた", "ほかの困りごとを見る"]) {
         await page.getByRole("button", { name, exact: true }).waitFor();
       }
@@ -152,6 +157,7 @@ async function storedData(page) {
     await step("コピー失敗時はエラー表示と全文選択で手動コピーできる", async () => {
       await openCategory(page, "research");
       await page.getByRole("button", { name: /調べたいことが/ }).click();
+      await toStep(page, 2);
       await page.getByRole("button", { name: "指示文をコピー" }).click();
       await page.getByText("自動でコピーできませんでした。").waitFor();
       const selected = await page.evaluate(() => window.getSelection().toString());
@@ -171,7 +177,7 @@ async function storedData(page) {
       const btn = page.getByRole("button", { name: "★ お気に入りを解除" });
       assert.strictEqual(await btn.getAttribute("aria-pressed"), "true");
       const d = await storedData(page);
-      assert.strictEqual(d.schemaVersion, 1);
+      assert.strictEqual(d.schemaVersion, 2);
       assert.deepStrictEqual(d.favorites, ["organize"]);
     });
 
@@ -245,8 +251,10 @@ async function storedData(page) {
           assert.deepStrictEqual(entries, EXPECTED[cat]);
           await page.locator(".entry").nth(i).click();
           assert.strictEqual(await page.locator("h1").textContent(), EXPECTED[cat][i]);
-          await page.getByRole("heading", { name: "次のお仕事で試せそうなこと" }).waitFor();
+          await toStep(page, 4);
           await page.getByRole("heading", { name: "回答を見るポイント" }).waitFor();
+          await toStep(page, 2);
+          await page.getByRole("heading", { name: "次のお仕事で試せそうなこと" }).waitFor();
           for (const name of ["指示文をコピー", "☆ お気に入りに保存", "試してみた", "ほかの困りごとを見る"]) {
             await page.getByRole("button", { name, exact: true }).waitFor();
           }
@@ -265,12 +273,14 @@ async function storedData(page) {
     await step("Excelカード：コピー・ほかの困りごと（同じカテゴリ内）・注意書き", async () => {
       await openCategory(page, "excel");
       await page.getByRole("button", { name: /数式のエラーを/ }).click();
+      await toStep(page, 2);
       const expected = (await page.locator(".prompt__text").textContent()).trim();
       await page.getByRole("button", { name: "指示文をコピー" }).click();
       await page.getByText("指示文をコピーしました。").waitFor();
       assert.strictEqual(await page.evaluate(() => navigator.clipboard.readText()), expected);
       assert.ok(expected.startsWith("Excelの数式エラーについて相談します。"));
-      assert.ok(expected.endsWith("情報が足りなければ、原因を断定せず追加で質問してください。"));
+      // 確定文面をそのまま先頭に残し、状況に応じた指示を後ろに足す
+      assert.ok(expected.includes("情報が足りなければ、原因を断定せず追加で質問してください。\n\n原因は、表示 → 期待する結果 → 参照先 → データの形式 の順に"));
       await page
         .getByText("次に：普段お使いの生成AIに貼り付け、エラー表示と期待する結果を伝えてください。数式を共有する場合は、機密情報を含まない架空の例に置き換えましょう。")
         .waitFor();
@@ -357,7 +367,7 @@ async function storedData(page) {
     const { context, page, requests } = await newPage(browser);
     await page.getByRole("button", { name: "有料でできること（準備中）" }).click();
     assert.strictEqual(await page.locator("h1").textContent(), "有料でできること（準備中）");
-    await page.getByRole("heading", { name: "構想1：条件に合わせた作業ガイド" }).waitFor();
+    await page.getByRole("heading", { name: "構想1：より細かな条件に合わせた作業ガイド" }).waitFor();
     await page.getByRole("heading", { name: "構想2：追加カテゴリ" }).waitFor();
     await page.getByRole("heading", { name: "無料で使える機能との違い" }).waitFor();
     await page.getByText("現在、有料機能の購入や会員登録はできません。", { exact: false }).waitFor();
@@ -369,6 +379,348 @@ async function storedData(page) {
     assert.strictEqual(await page.locator("main a[href]").count(), 0, "外部リンクなし");
     await page.getByRole("button", { name: "無料のカードを使う（トップへ）" }).click();
     assert.strictEqual(await page.locator("h1").textContent(), "今日は、どのお仕事を進めますか？");
+    await context.close();
+  });
+
+  // --- 選択式ガイド（全8本） -------------------------------------------------
+  const GUIDE_CARDS = [
+    ["research", "scope", "調べたいことが、うまくまとまらない"],
+    ["research", "organize", "情報が多くて、整理できない"],
+    ["research", "refine", "AIの回答が、しっくりこない"],
+    ["research", "outline", "報告書の流れが、決まらない"],
+    ["excel", "excel-function", "使いたい関数が、分からない"],
+    ["excel", "excel-error", "数式のエラーを、解消したい"],
+    ["excel", "excel-aggregate", "集計の進め方に、迷っている"],
+    ["excel", "excel-format", "表を見やすく、整えたい"],
+  ];
+  const openGuide = async (page, cat, title) => {
+    await page.getByRole("button", { name: "お仕事の進め方ガイド" }).click();
+    await openCategory(page, cat);
+    await page.locator(".entry", { hasText: title }).click();
+  };
+  const currentStep = async (page) => page.locator('[aria-current="step"]').getAttribute("data-step");
+  const progressOf = async (page, id) => ((await storedData(page)) || { progress: {} }).progress[id];
+
+  await step("全8本：状況選択→指示文→試す→見本→気になる点→完了まで進める", async () => {
+    const { context, page, errors } = await newPage(browser, {
+      context: { permissions: ["clipboard-read", "clipboard-write"] },
+    });
+    for (const [cat, id, title] of GUIDE_CARDS) {
+      await openGuide(page, cat, title);
+      assert.strictEqual(await page.locator("h1").textContent(), title, id);
+      assert.strictEqual(await currentStep(page), "1");
+
+      // 1. 状況を選ぶ（各グループの最初の選択肢）
+      const groups = page.locator(".choice-group");
+      const n = await groups.count();
+      assert.ok(n >= 1, id + "：状況の選択肢がある");
+      for (let g = 0; g < n; g++) await groups.nth(g).locator("input").first().check();
+      await page.locator("[data-update-status]", { hasText: "指示文を更新しました" }).waitFor();
+
+      // 2. 進め方と指示文（選んだ状況が反映され、コピーは指示文本体だけ）
+      await page.locator("[data-next]").click();
+      assert.strictEqual(await currentStep(page), "2");
+      await page.getByRole("heading", { name: "次のお仕事で試せそうなこと" }).waitFor();
+      const sel = (await progressOf(page, id)).sel;
+      const expected = await page.evaluate(([i, s]) => window.__researchGuide.buildPrompt(i, s), [id, sel]);
+      assert.strictEqual(await page.locator(".prompt__text").textContent(), expected, id + "：表示中の指示文");
+      await page.getByRole("button", { name: "指示文をコピー" }).click();
+      await page.locator(".copy-status__next").waitFor();
+      assert.strictEqual(await page.evaluate(() => navigator.clipboard.readText()), expected, id + "：コピー内容");
+
+      // 3. 普段の生成AIで試す（自動送信せず、案内とコピーのみ）
+      await page.locator("[data-next]").click();
+      assert.strictEqual(await page.locator(".try-steps li").count(), 4);
+      await page.getByText("このアプリから生成AIへ自動で送信することはありません。", { exact: false }).waitFor();
+
+      // 4. 見本（架空の例）と確認ポイント
+      await page.locator("[data-next]").click();
+      await page.getByRole("heading", { name: "見直す前（架空の例）" }).waitFor();
+      await page.getByRole("heading", { name: "改善例（架空の例）" }).waitFor();
+      await page.getByRole("heading", { name: "回答を見るポイント" }).waitFor();
+
+      // 5. 気になる点：すべての選択肢を確かめる
+      await page.locator("[data-next]").click();
+      const guide = await page.evaluate((i) => {
+        const g = window.__researchGuide.GUIDES[i];
+        return g.issues.map((x) => ({ id: x.id, kind: x.kind || "issue", label: x.label }));
+      }, id);
+      assert.ok(guide.some((x) => x.kind === "ok"), id + "：問題なしの選択肢");
+      assert.ok(guide.some((x) => x.kind === "unsure" && x.label === "まだ判断がつかない"), id + "：まだ判断がつかない");
+      let copiedFix = false;
+      for (const issue of guide) {
+        await page.locator(`input[name="issue-${id}"][value="${issue.id}"]`).check();
+        const panel = page.locator(".issue-panel");
+        if (issue.kind === "ok") {
+          await panel.getByText("修正は必要なさそうです。", { exact: false }).waitFor();
+        } else if (issue.kind === "unsure") {
+          await panel.getByText("判断がつかないのは自然なことです。", { exact: false }).waitFor();
+          assert.ok((await panel.locator("li").count()) >= 3, id + "：見る場所の具体例");
+          const t = await panel.textContent();
+          assert.ok(!/失敗|能力|不足しています/.test(t), id + "：失敗扱いしない");
+        } else {
+          await panel.getByRole("heading", { name: issue.label }).waitFor();
+          await panel.getByText("確認すること").waitFor();
+          await panel.getByText("変えること").waitFor();
+          const fix = await page.evaluate(([i, x, s]) => window.__researchGuide.fixPrompt(i, x, s), [id, issue.id, sel]);
+          assert.strictEqual(await panel.locator(".prompt__text").textContent(), fix);
+          assert.ok(!/^(もっと)?詳しく教えて/.test(fix), id + "：聞き直すだけの指示にしない");
+          if (!copiedFix) {
+            await page.getByRole("button", { name: "修正用の指示文をコピー" }).click();
+            await page.getByText("修正用の指示文をコピーしました。").waitFor();
+            assert.strictEqual(await page.evaluate(() => navigator.clipboard.readText()), fix);
+            copiedFix = true;
+          }
+        }
+        assert.strictEqual((await progressOf(page, id)).issue, issue.id);
+      }
+
+      // 6. 最後のチェック → 完了
+      await page.locator("[data-next]").click();
+      assert.strictEqual(await currentStep(page), "6");
+      const boxes = page.locator(".check-item input");
+      assert.ok((await boxes.count()) >= 4, id + "：確認リスト");
+      await boxes.first().check();
+      assert.deepStrictEqual((await progressOf(page, id)).checks, [0]);
+      await page.getByRole("button", { name: "このガイドを完了する" }).click();
+      await page.locator("[data-completed]").waitFor();
+      const d = await storedData(page);
+      assert.strictEqual(d.progress[id], undefined, id + "：完了で進み具合を解除");
+      assert.strictEqual(d.practice[id].tried, true, id + "：試してみたを記録");
+    }
+    assert.deepStrictEqual(errors, []);
+    await context.close();
+  });
+
+  await step("問題がなければ、修正を選ばずにそのまま完了できる", async () => {
+    const { context, page } = await newPage(browser);
+    await openGuide(page, "excel", "表を見やすく、整えたい");
+    await toStep(page, 4);
+    await page.locator("[data-skip-to-final]").click();
+    assert.strictEqual(await currentStep(page), "6");
+    await page.getByRole("button", { name: "このガイドを完了する" }).click();
+    await page.locator("[data-completed]").waitFor();
+    // 「問題なし」を選んだ場合も、最後のチェックへ進める
+    await openGuide(page, "research", "情報が多くて、整理できない");
+    await toStep(page, 5);
+    await page.getByLabel("この整理で進められそう").check();
+    await page.getByRole("button", { name: "最後のチェックへ →" }).click();
+    assert.strictEqual(await currentStep(page), "6");
+    await context.close();
+  });
+
+  await step("状況を変えると指示文が更新され、更新を知らせる", async () => {
+    const { context, page } = await newPage(browser, {
+      context: { permissions: ["clipboard-read", "clipboard-write"] },
+    });
+    await openGuide(page, "research", "調べたいことが、うまくまとまらない");
+    await page.getByLabel("施策検討").check();
+    await page.getByLabel("今後3年").check();
+    await toStep(page, 2);
+    let text = await page.locator(".prompt__text").textContent();
+    assert.ok(text.includes("・報告の目的：施策検討") && text.includes("・対象期間：今後3年"));
+    assert.ok(text.includes("・報告相手：未選択（仮置き）"), "未選択は仮置きと表示");
+    await page.getByText("報告相手＝未選択（仮置き）", { exact: false }).waitFor();
+    await page.getByRole("button", { name: "指示文をコピー" }).click();
+    await page.getByRole("button", { name: "状況を変える" }).click();
+    await page.getByLabel("リスク把握").check();
+    await page.getByLabel("未定").first().check();
+    await page.locator("[data-update-status]", { hasText: "条件に合わせて指示文を更新しました" }).waitFor();
+    assert.ok(await page.locator("[data-tentative-note]").isVisible(), "未定は仮置きと案内");
+    await toStep(page, 2);
+    await page.getByText("選んだ状況に合わせて、指示文を更新しました。").waitFor();
+    await page.getByText("前回コピーした後に状況を変えたため", { exact: false }).waitFor();
+    text = await page.locator(".prompt__text").textContent();
+    assert.ok(text.includes("・報告の目的：リスク把握") && text.includes("・対象期間：未定（仮置き）"));
+    await context.close();
+  });
+
+  await step("再読み込み後に「前回の続きから」で再開できる（直近のガイドを表示）", async () => {
+    const { context, page } = await newPage(browser);
+    assert.strictEqual(await page.locator("#resume-heading").count(), 0, "最初は表示しない");
+    await openGuide(page, "research", "報告書の流れが、決まらない");
+    await page.getByLabel("施策提案").check();
+    await toStep(page, 3);
+    await openGuide(page, "excel", "使いたい関数が、分からない");
+    await page.getByLabel("値を検索").check();
+    await toStep(page, 2);
+    await page.reload();
+
+    const resume = page.locator(".resume");
+    await resume.getByRole("heading", { name: "前回の続きから" }).waitFor();
+    assert.ok((await resume.textContent()).includes("使いたい関数が、分からない"), "直近のガイド");
+    assert.ok((await resume.textContent()).includes("ステップ2／6：進め方と指示文を見る"));
+    await page.locator("[data-resume]").click();
+    assert.strictEqual(await page.locator("h1").textContent(), "使いたい関数が、分からない");
+    assert.strictEqual(await currentStep(page), "2");
+    await page.getByText("前回の続き（ステップ2：進め方と指示文を見る）から表示しています。").waitFor();
+    assert.ok((await page.locator(".prompt__text").textContent()).includes("したい処理は、値の検索です。"));
+    await toStep(page, 1);
+    assert.ok(await page.getByLabel("値を検索").isChecked(), "選んだ状況を保持");
+
+    // 最初から：進み具合を消してステップ1から
+    await page.getByRole("button", { name: "トップ", exact: true }).click();
+    await page.locator("[data-resume-restart]").click();
+    assert.strictEqual(await currentStep(page), "1");
+    assert.strictEqual(await page.locator(".choice-group input:checked").count(), 0);
+    assert.strictEqual(await progressOf(page, "excel-function"), undefined);
+
+    // 残っているもう1本が表示され、完了すると表示が消える
+    await page.getByRole("button", { name: "トップ", exact: true }).click();
+    assert.ok((await page.locator(".resume").textContent()).includes("報告書の流れが、決まらない"));
+    await page.locator("[data-resume]").click();
+    assert.strictEqual(await currentStep(page), "3");
+    await toStep(page, 6);
+    await page.getByRole("button", { name: "このガイドを完了する" }).click();
+    await page.getByRole("button", { name: "トップへ" }).click();
+    assert.strictEqual(await page.locator(".resume").count(), 0, "完了したガイドは再開表示を解除");
+    await context.close();
+  });
+
+  await step("ブラウザーの戻るでステップを戻れ、保存にも反映される", async () => {
+    const { context, page } = await newPage(browser);
+    await openGuide(page, "excel", "集計の進め方に、迷っている");
+    await page.locator("[data-next]").click();
+    await page.locator("[data-next]").click();
+    assert.strictEqual(await currentStep(page), "3");
+    await page.goBack();
+    assert.strictEqual(await currentStep(page), "2");
+    assert.strictEqual((await progressOf(page, "excel-aggregate")).step, 2);
+    assert.strictEqual(page.url(), BASE);
+    await context.close();
+  });
+
+  await step("「記録をまとめて削除」で進み具合も削除される", async () => {
+    const { context, page } = await newPage(browser);
+    await openGuide(page, "research", "AIの回答が、しっくりこない");
+    await page.getByLabel("根拠が分からない").check();
+    await toStep(page, 4);
+    await page.getByRole("button", { name: "端末内の記録について・まとめて削除" }).click();
+    await page.getByText("ガイドの進み具合", { exact: false }).first().waitFor();
+    await page.getByText("（現在 1 件）", { exact: false }).first().waitFor();
+    await page.getByRole("button", { name: "端末内の記録をすべて削除" }).click();
+    await page.getByRole("button", { name: "すべて削除する" }).click();
+    assert.strictEqual(await page.evaluate((k) => localStorage.getItem(k), KEY), null);
+    await page.getByRole("button", { name: "お仕事の進め方ガイド" }).click();
+    assert.strictEqual(await page.locator(".resume").count(), 0);
+    await context.close();
+  });
+
+  await step("壊れた進み具合のデータは無視して読み込む", async () => {
+    const { context, page, errors } = await newPage(browser);
+    await page.evaluate((k) => {
+      localStorage.setItem(
+        k,
+        JSON.stringify({
+          schemaVersion: 2,
+          favorites: ["scope"],
+          practice: {},
+          latestResult: null,
+          progress: {
+            scope: { step: 99, sel: { purpose: "hack", period: "3y" }, issue: "nope", checks: [0, 0, 50, "x"], touched: 3 },
+            unknown: { step: 2 },
+          },
+          seq: 3,
+        })
+      );
+    }, KEY);
+    await page.reload();
+    const resume = page.locator(".resume");
+    assert.ok((await resume.textContent()).includes("ステップ1／6"));
+    await page.locator("[data-resume]").click();
+    assert.ok(await page.getByLabel("今後3年").isChecked());
+    assert.strictEqual(await page.locator('input[name="sel-purpose"]:checked').count(), 0);
+    assert.deepStrictEqual(errors, []);
+    await context.close();
+  });
+
+  await step("保存できない環境でも、ガイドを最後まで一時的に使える", async () => {
+    const { context, page, errors } = await newPage(browser, {
+      init: () => {
+        Storage.prototype.getItem = () => {
+          throw new Error("SecurityError");
+        };
+        Storage.prototype.setItem = () => {
+          throw new Error("SecurityError");
+        };
+      },
+    });
+    await openGuide(page, "excel", "数式のエラーを、解消したい");
+    await page.getByLabel("エラー表示が出る").check();
+    await toStep(page, 2);
+    assert.ok((await page.locator(".prompt__text").textContent()).includes("状況：エラー表示"));
+    await toStep(page, 5);
+    await page.getByLabel("エラー表示だけ消えた").check();
+    await page.getByRole("heading", { name: "エラー表示だけ消えた" }).waitFor();
+    await page.getByRole("button", { name: "トップ", exact: true }).click();
+    await page.locator("[data-resume]").click(); // ページ内では続きを保持
+    assert.strictEqual(await currentStep(page), "5");
+    await toStep(page, 6);
+    await page.getByRole("button", { name: "このガイドを完了する" }).click();
+    await page.locator("[data-completed]").waitFor();
+    assert.deepStrictEqual(errors, []);
+    await context.close();
+  });
+
+  await step("キーボードだけで、ステップ移動・状況の選択・修正用指示文のコピーができる", async () => {
+    const { context, page } = await newPage(browser, {
+      context: { permissions: ["clipboard-read", "clipboard-write"] },
+    });
+    const focused = () =>
+      page.evaluate(() => {
+        const el = document.activeElement;
+        return el && /^(BUTTON|INPUT)$/.test(el.tagName) ? (el.tagName === "INPUT" ? "INPUT:" + el.value : el.textContent.trim()) : "";
+      });
+    async function tabTo(re, max = 60) {
+      for (let i = 0; i < max; i++) {
+        await page.keyboard.press("Tab");
+        if (re.test(await focused())) return;
+      }
+      throw new Error("フォーカスが届かない: " + re);
+    }
+    await tabTo(/^Excel作業/);
+    await page.keyboard.press("Enter");
+    await tabTo(/集計の進め方に/);
+    await page.keyboard.press("Enter");
+    await tabTo(/^INPUT:sum$/);
+    await page.keyboard.press("ArrowRight"); // 件数
+    assert.strictEqual((await progressOf(page, "excel-aggregate")).sel.method, "count");
+    await tabTo(/ステップ5：気になる点と修正方法$/);
+    await page.keyboard.press("Enter");
+    assert.strictEqual(await currentStep(page), "5");
+    await tabTo(/^INPUT:mismatch$/);
+    await page.keyboard.press("Space");
+    await page.getByRole("heading", { name: "数字が合わない" }).waitFor();
+    await tabTo(/^修正用の指示文をコピー$/);
+    await page.keyboard.press("Enter");
+    await page.getByText("修正用の指示文をコピーしました。").waitFor();
+    await tabTo(/^次へ：最後のチェック/);
+    await page.keyboard.press("Enter");
+    await tabTo(/^INPUT:on$/);
+    await page.keyboard.press("Space");
+    await tabTo(/^このガイドを完了する$/);
+    await page.keyboard.press("Enter");
+    await page.locator("[data-completed]").waitFor();
+    await context.close();
+  });
+
+  await step("スマートフォン幅（375px）で全ステップに横スクロールが出ない", async () => {
+    const { context, page } = await newPage(browser, {
+      context: { viewport: { width: 375, height: 740 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 },
+    });
+    const noOverflow = () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+    for (const [cat, id, title] of [GUIDE_CARDS[0], GUIDE_CARDS[4], GUIDE_CARDS[6]]) {
+      await openGuide(page, cat, title);
+      for (let n = 1; n <= 6; n++) {
+        await toStep(page, n);
+        if (n === 5) await page.locator(`input[name="issue-${id}"]`).first().check();
+        assert.ok(await noOverflow(), id + " ステップ" + n);
+        if (SHOT_DIR && id === "excel-aggregate") await page.screenshot({ path: path.join(SHOT_DIR, `guide-${n}.png`), fullPage: true });
+      }
+    }
+    await page.getByRole("button", { name: "お仕事の進め方ガイド" }).tap();
+    assert.ok(await noOverflow());
+    if (SHOT_DIR) await page.screenshot({ path: path.join(SHOT_DIR, "guide-home.png"), fullPage: true });
     await context.close();
   });
 
@@ -610,6 +962,8 @@ async function storedData(page) {
     await page.keyboard.press("Enter");
     await tabTo(/情報が多くて/);
     await page.keyboard.press("Enter");
+    await tabTo(/^次へ：進め方と指示文を見る/);
+    await page.keyboard.press("Enter");
     await tabTo(/^指示文をコピー$/);
     await page.keyboard.press("Enter");
     await page.getByText("指示文をコピーしました。").waitFor();
@@ -699,9 +1053,17 @@ async function storedData(page) {
     });
     await openCategory(page, "excel");
     await page.getByRole("button", { name: /表を見やすく/ }).click();
+    await page.getByLabel("印刷する").check();
+    await toStep(page, 2);
     await page.getByRole("button", { name: "指示文をコピー" }).click();
+    await toStep(page, 5);
+    await page.getByLabel("印刷すると切れる").check();
+    await page.getByRole("button", { name: "修正用の指示文をコピー" }).click();
+    await toStep(page, 6);
+    await page.locator(".check-item input").first().check();
+    await page.getByRole("button", { name: "このガイドを完了する" }).click();
     await page.getByRole("button", { name: "☆ お気に入りに保存" }).click();
-    await page.getByRole("button", { name: "試してみた", exact: true }).click();
+    // 完了すると「試してみた」が記録され、感想を選べる
     await page.getByLabel("役立った").check();
     await page.getByRole("button", { name: "トップ", exact: true }).click();
     await page.getByRole("button", { name: "有料でできること（準備中）" }).click();
