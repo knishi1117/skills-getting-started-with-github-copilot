@@ -545,7 +545,16 @@ async function storedData(page) {
     await openGuide(page, "excel", "使いたい関数が、分からない");
     await page.getByLabel("値を検索").check();
     await toStep(page, 2);
+    // 再読み込み：表示していたガイドとステップに戻る
     await page.reload();
+    assert.strictEqual(await page.locator("h1").textContent(), "使いたい関数が、分からない");
+    assert.strictEqual(await currentStep(page), "2");
+    // 新しいタブでURLを開く：トップに「前回の続きから」を表示
+    const fresh = await context.newPage();
+    await fresh.goto(BASE);
+    await fresh.locator(".resume").getByRole("heading", { name: "前回の続きから" }).waitFor();
+    await fresh.close();
+    await page.getByRole("button", { name: "お仕事の進め方ガイド" }).click();
 
     const resume = page.locator(".resume");
     await resume.getByRole("heading", { name: "前回の続きから" }).waitFor();
@@ -831,9 +840,8 @@ async function storedData(page) {
     await page.locator("[data-review-done]").waitFor();
     assert.ok(!(await page.locator("[data-review-done]").textContent()).includes("正解"));
     assert.strictEqual(await page.locator("[data-review]").count(), 0);
-    await page.reload();
-    await page.locator("[data-resume]").click();
-    await toStep(page, 4);
+    await page.reload(); // 再読み込みでステップ4に戻る
+    assert.strictEqual(await currentStep(page), "4");
     assert.strictEqual(await page.locator("[data-review]").count(), 0, "再読み込みでも同じ日は1回");
     assert.strictEqual((await treeOf(page)).reviewed.length, 1);
     await goHome(page);
@@ -841,7 +849,7 @@ async function storedData(page) {
     assert.strictEqual(await page.locator(".tree-flower").count(), 1);
     assert.strictEqual(await stageText(page), "苗木", "見直しだけでは成長段階は進まない");
     await page.clock.setSystemTime(new Date("2026-11-04T09:00:00+09:00"));
-    await page.reload();
+    await page.reload(); // トップを表示中に再読み込み → トップのまま
     await page.locator("[data-resume]").click();
     await toStep(page, 4);
     await page.locator("[data-review]").click();
@@ -1341,6 +1349,56 @@ async function storedData(page) {
     await context.close();
   });
 
+  // --- 直接URL・再読み込み ------------------------------------------------------
+  await step("再読み込みで各画面がそのまま表示される（診断は回答を保存しないため開始画面に戻る）", async () => {
+    const { context, page, errors } = await newPage(browser);
+    const h1 = () => page.locator("h1").textContent();
+    await openCategory(page, "excel");
+    await page.reload();
+    assert.strictEqual(await h1(), "Excel作業の、どこに迷っていますか？");
+    await page.locator(".entry", { hasText: "表を見やすく、整えたい" }).click();
+    await toStep(page, 5);
+    await page.getByLabel("色の意味が伝わらない").check();
+    await page.reload();
+    assert.strictEqual(await h1(), "表を見やすく、整えたい");
+    assert.strictEqual(await currentStep(page), "5");
+    assert.ok(await page.getByLabel("色の意味が伝わらない").isChecked());
+    await page.getByRole("heading", { name: "色の意味が伝わらない" }).waitFor();
+    await page.goBack();
+    assert.strictEqual(await currentStep(page), "1", "再読み込み後も戻る操作ができる（ステップ1から5へ移動していた）");
+    await page.getByRole("button", { name: "端末内の記録について・まとめて削除" }).click();
+    await page.reload();
+    assert.strictEqual(await h1(), "端末内の記録について");
+    await page.getByRole("button", { name: "← トップに戻る" }).click();
+    await page.getByRole("button", { name: "有料でできること（準備中）" }).click();
+    await page.reload();
+    assert.strictEqual(await h1(), "有料でできること（準備中）");
+    await page.getByRole("button", { name: "お仕事の進め方ガイド" }).click();
+    await openCategory(page, "research");
+    await page.getByRole("button", { name: "5問のチェックを始める" }).click();
+    await page.getByRole("button", { name: "始める" }).click();
+    await page.locator('input[value="notyet"]').check();
+    await page.reload();
+    assert.strictEqual(await h1(), "5問のチェック", "回答はメモリだけなので開始画面に戻る");
+    assert.strictEqual((await storedData(page)) && JSON.stringify(await storedData(page)).includes("notyet"), false, "回答は保存しない");
+    assert.deepStrictEqual(errors, []);
+    await context.close();
+  });
+
+  await step("存在しないパスを直接開いても、アプリが正しく読み込まれる", async () => {
+    const { context, page, errors } = await newPage(browser);
+    const deep = new URL("/guide/step/3?x=1", BASE).href;
+    const resp = await page.goto(deep);
+    // Cloudflare Pages は 404.html がない場合、未知のパスに / を返す。ローカルの確認用サーバーは 404 を返す。
+    if (resp.status() === 200) {
+      assert.strictEqual(await page.locator("h1").textContent(), "今日は、どのお仕事を進めますか？");
+      assert.strictEqual(await page.locator(".tree-card").count(), 1);
+      assert.deepStrictEqual(errors, []);
+    }
+    console.log("     " + deep + " → HTTP " + resp.status());
+    await context.close();
+  });
+
   // --- 外向き通信 -----------------------------------------------------------
   await step("外向き通信がない（同一オリジンの静的ファイル3点のみ）", async () => {
     const { context, page, requests } = await newPage(browser, {
@@ -1375,7 +1433,8 @@ async function storedData(page) {
       assert.strictEqual(url.origin, origin, "外部への通信: " + u);
       assert.strictEqual(url.search, "", "クエリ付き通信: " + u);
     });
-    const paths = unique.map((u) => new URL(u).pathname).sort();
+    // Cloudflare Pages では / で、ローカルの確認用サーバーでは /index.html で配信される
+    const paths = unique.map((u) => new URL(u).pathname).map((p) => (p === "/" ? "/index.html" : p)).sort();
     assert.deepStrictEqual(paths.filter((p) => p !== "/favicon.ico"), ["/app.js", "/index.html", "/styles.css"]);
     assert.strictEqual(page.url(), BASE);
     console.log("     通信先: " + unique.join(", "));

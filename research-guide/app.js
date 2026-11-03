@@ -1465,8 +1465,9 @@
     };
   }
 
-  window.addEventListener("popstate", (event) => {
-    const s = event.state;
+  // history.state（画面名・カードID・ステップなど。回答内容は含まない）から画面を復元する。
+  // ブラウザーの戻る・進むと、再読み込みの両方で使う。
+  function restoreFromHistory(s) {
     if (!s || s.app !== "research-guide") {
       Object.assign(state, { view: "home" });
     } else {
@@ -1496,6 +1497,10 @@
     if (state.view === "card" && !CARD_BY_ID[state.cardId]) state.view = "home";
     if (state.view === "category" && !CATEGORY_BY_ID[state.categoryId]) state.view = "home";
     Object.assign(state, { showAlternatives: false, confirmDelete: false, quizError: false, completed: false });
+  }
+
+  window.addEventListener("popstate", (event) => {
+    restoreFromHistory(event.state);
     render();
   });
 
@@ -3070,12 +3075,14 @@
   });
 
   store.load();
+  // 再読み込みしたときは、表示していた画面に戻す（診断の回答はメモリにだけあるため、診断は開始画面に戻る）
   try {
+    restoreFromHistory(history.state);
     history.replaceState(historyEntry(), "");
   } catch (e) {
-    /* noop */
+    state.view = "home";
   }
-  main.replaceChildren(viewHome());
+  main.replaceChildren(VIEWS[state.view]());
 
   // テスト用に純粋関数だけを公開する（通信や保存は行わない）
   window.__researchGuide = {

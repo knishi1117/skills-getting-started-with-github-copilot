@@ -40,3 +40,6 @@ Thumbs.db
 .actrc*
 
 __pycache__/
+# Cloudflare Pages 用のビルド結果（research-guide/build.sh で作成）
+research-guide/dist/
+research-guide/.wrangler/

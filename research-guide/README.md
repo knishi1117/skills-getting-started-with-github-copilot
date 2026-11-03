@@ -108,11 +108,51 @@ python3 -m http.server 8123 --directory research-guide
 - 読み込み時に検証し、想定外の値は捨てます。データが壊れているときや localStorage が使えないときも、カードの閲覧と診断はそのまま使えます（画面上に案内を表示）。
 - 別の端末への同期や復元はできません。
 
-## 操作確認
+## Cloudflare Pages で公開する
+
+静的ファイルだけのサイトです。サーバー側の処理（Pages Functions）、API、ログイン、アクセス解析は使いません。
+
+### 公開用のファイル
+
+- `build.sh`：公開するファイル（`index.html`・`app.js`・`styles.css`・`_headers`）だけを `dist/` にコピーします。依存関係のインストールやダウンロードはしません。README やテストは公開しません。
+- `_headers`：Cloudflare Pages が付ける HTTP ヘッダーです。`index.html` の meta と同じ CSP に `frame-ancestors 'none'` を加え、`Referrer-Policy: no-referrer` などを指定し、既定の `Access-Control-Allow-Origin: *` を外します（このファイル自体は配信されません）。
+- `index.html` は `/app.js`・`/styles.css` を絶対パスで読み込みます。Cloudflare Pages は `404.html` がない場合、存在しないパスにも `/` を返すため、どのURLで開いてもアプリが正しく読み込まれます。
+
+### 管理画面で設定する値
+
+| 項目 | 値 |
+| --- | --- |
+| 連携するリポジトリ | `knishi1117/skills-getting-started-with-github-copilot` |
+| 本番ブランチ | アプリが入っているブランチ（2026-11 時点では `claude/manager-research-report-app-c0hac6`。`main` にはまだ入っていません） |
+| フレームワークのプリセット | なし（None） |
+| ルートディレクトリ | `research-guide` |
+| ビルドコマンド | `sh build.sh` |
+| ビルド出力ディレクトリ | `dist` |
+| 環境変数 | 不要（秘密情報も不要） |
+
+- ルートディレクトリを `research-guide` にするのは、リポジトリ直下にある既存の FastAPI 用の `requirements.txt` などを、ビルドの対象にしないためです。
+- 出力ディレクトリがルートディレクトリから見た位置として扱われることは、公式文書に明記がありません。初回のビルドログで `dist` が見つからない場合は、`research-guide/dist` に変えてください。
+
+### 公開前に確認すること
+
+- **Web Analytics を有効にしない**：プロジェクトの **Metrics** にある Web Analytics を有効にすると、Cloudflare が次回のデプロイから計測用の JavaScript を自動で追加します。このアプリでは有効にしません（追加されても CSP で読み込みを止めます）。
+- **プレビューのデプロイ**：既定では本番以外のブランチへのプッシュごとに、公開URL（`*.pages.dev`）付きのプレビューが作られます。不要なら **Settings** → **Builds & deployments** → **Preview branch** を **None** にします。
+
+### Cloudflare 側の処理と、アプリの送信の違い
+
+- **アプリ**：診断の回答、実践記録、ガイドの進み具合、お仕事の木の記録は、ブラウザーの localStorage にだけ保存し、どこにも送信しません。CSP の `connect-src 'none'` で、通信そのものをブラウザーが止めます。ブラウザーが受け取るのは `/`・`/app.js`・`/styles.css` の3つだけで、URL やリクエストに入力内容は入りません。
+- **Cloudflare**：ページを配信する事業者として、閲覧のたびに通常のHTTPリクエスト（接続元IPアドレス、日時、要求したパス、User-Agent など）を受け取ります。これはどの公開サーバーでも起きることで、アプリの設定では止められません。Cloudflare が何を記録し、どれだけ保存するかは Cloudflare のプライバシーポリシーと契約条件によります（未確認）。
+
+
 
 ```sh
 python3 -m http.server 8123 --directory research-guide &
 node research-guide/tests/e2e.js
+
+# Cloudflare Pages と同じ配信方法で確認する場合（wrangler は確認用で、このアプリの依存関係ではありません）
+sh research-guide/build.sh
+npx wrangler pages dev research-guide/dist --port 8788 &
+BASE_URL=http://127.0.0.1:8788/ node research-guide/tests/e2e.js
 ```
 
 Playwright（chromium）で、全8本のガイドを開始から完了まで（状況の選択、指示文の更新、すべての「気になる点」、修正用指示文のコピー、修正なしでの完了）、再読み込み後の再開、お気に入り・実践記録・削除、出題と戻る操作、結果の分岐、保存データの破損や保存できない場合の動作、キーボード操作、スマートフォン幅の表示、通信先（同一オリジンの静的ファイル3点だけか）を確認します。Playwright はこのアプリの依存関係ではなく、確認用です。
