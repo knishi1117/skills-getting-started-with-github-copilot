@@ -1,0 +1,9 @@
+# Cloudflare Pages が配信時に付けるHTTPヘッダー（このファイル自体は配信されない）
+# index.html の meta と同じ CSP を HTTP ヘッダーでも送り、meta では効かない frame-ancestors を加える。
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; font-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  ! Access-Control-Allow-Origin
