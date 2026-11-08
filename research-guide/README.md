@@ -115,6 +115,7 @@ python3 -m http.server 8123 --directory research-guide
 ### 公開用のファイル
 
 - `build.sh`：公開するファイル（`index.html`・`app.js`・`styles.css`・`_headers`）だけを `dist/` にコピーします。依存関係のインストールやダウンロードはしません。README やテストは公開しません。
+- `wrangler.jsonc`：Cloudflare Workers で公開する場合の設定です（下記）。
 - `_headers`：Cloudflare Pages が付ける HTTP ヘッダーです。`index.html` の meta と同じ CSP に `frame-ancestors 'none'` を加え、`Referrer-Policy: no-referrer` などを指定し、既定の `Access-Control-Allow-Origin: *` を外します（このファイル自体は配信されません）。
 - `index.html` は `/app.js`・`/styles.css` を絶対パスで読み込みます。Cloudflare Pages は `404.html` がない場合、存在しないパスにも `/` を返すため、どのURLで開いてもアプリが正しく読み込まれます。
 
@@ -132,6 +133,22 @@ python3 -m http.server 8123 --directory research-guide
 
 - ルートディレクトリを `research-guide` にするのは、リポジトリ直下にある既存の FastAPI 用の `requirements.txt` などを、ビルドの対象にしないためです。
 - 出力ディレクトリがルートディレクトリから見た位置として扱われることは、公式文書に明記がありません。初回のビルドログで `dist` が見つからない場合は、`research-guide/dist` に変えてください。
+
+### Cloudflare Workers（静的ファイルのみ）で公開する場合
+
+Cloudflare の管理画面で「Workers」としてプロジェクトを作った場合は、`wrangler.jsonc` の設定で同じファイルを配信します（Worker のスクリプトはありません）。
+
+| 項目 | 値 |
+| --- | --- |
+| Git ブランチ | アプリが入っているブランチ（`main` に取り込むまでは `claude/manager-research-report-app-c0hac6`） |
+| ビルドコマンド | `sh build.sh` |
+| デプロイコマンド | `npx wrangler deploy`（既定のまま） |
+| ルートディレクトリ | `research-guide` |
+| ビルド変数 | 不要 |
+
+- `wrangler.jsonc` の `name` は、管理画面の Worker 名（`enjoy-work`）と一致させています。Worker 名を変えた場合は、ここも変えてください。
+- `not_found_handling: "single-page-application"` で、存在しないパスを開いたときも `index.html` を返します。`_headers` も Workers で同じように使えます。
+- 新しく作った Worker は Workers Logs（リクエスト情報の記録、保存期間7日）が既定で有効です。このアプリでは `observability.enabled: false` で無効にしています。
 
 ### 公開前に確認すること
 

@@ -1,0 +1,16 @@
+{
+  // Cloudflare Workers（静的ファイルのみ）で公開するための設定。
+  // Worker のスクリプトはなく、dist/ の静的ファイルだけを配信する。
+  // name は Cloudflare 管理画面の Worker 名と一致させる必要がある。
+  "name": "enjoy-work",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist",
+    // 存在しないパスを開いたときも index.html を返す
+    "not_found_handling": "single-page-application"
+  },
+  // Workers Logs（リクエスト情報の記録）は使わない
+  "observability": {
+    "enabled": false
+  }
+}
