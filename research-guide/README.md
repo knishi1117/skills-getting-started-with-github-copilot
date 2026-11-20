@@ -146,6 +146,7 @@ Cloudflare の管理画面で「Workers」としてプロジェクトを作っ�
 | ルートディレクトリ | `research-guide` |
 | ビルド変数 | 不要 |
 
+- 本番ブランチを変えた後は、そのブランチへのプッシュで新しいビルドが始まります。失敗したビルドの「ビルドを再試行」は、同じブランチ・同じコミットでやり直すだけなので、ブランチ変更の確認には使えません。
 - `wrangler.jsonc` の `name` は、管理画面の Worker 名（`enjoy-work`）と一致させています。Worker 名を変えた場合は、ここも変えてください。
 - `not_found_handling: "single-page-application"` で、存在しないパスを開いたときも `index.html` を返します。`_headers` も Workers で同じように使えます。
 - 新しく作った Worker は Workers Logs（リクエスト情報の記録、保存期間7日）が既定で有効です。このアプリでは `observability.enabled: false` で無効にしています。
