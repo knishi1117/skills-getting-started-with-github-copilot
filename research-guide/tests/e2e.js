@@ -1349,6 +1349,30 @@ async function storedData(page) {
     await context.close();
   });
 
+  await step("広い画面（1280px）：お仕事の木を右側に置き、ガイドの列の幅と順序は変えない", async () => {
+    const { context, page } = await newPage(browser, { context: { viewport: { width: 1280, height: 800 } } });
+    const box = (sel) => page.locator(sel).boundingBox();
+    const tree = await box(".tree-card");
+    const hero = await box(".hero");
+    const cat = await box("[data-category='excel']");
+    assert.ok(tree.x > hero.x + hero.width, "木はガイドの右側");
+    assert.ok(tree.y < cat.y, "スクロールせずに見える位置");
+    assert.strictEqual(Math.round(hero.width), 720, "ガイドの列は720px");
+    assert.strictEqual(Math.round(hero.x), Math.round((await box(".site-title")).x), "見出しとガイドの左端がそろう");
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    // 読み上げ・キーボードの順序は変えない（カテゴリ → 木）
+    const order = await page.evaluate(() => {
+      const a = document.querySelector("[data-category='excel']");
+      return !!(a.compareDocumentPosition(document.querySelector(".tree-card")) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    assert.ok(order);
+    // ガイドの画面は従来どおり720px
+    await openCategory(page, "research");
+    await page.locator(".entry").first().click();
+    assert.strictEqual(Math.round((await box(".card")).width) <= 720, true);
+    await context.close();
+  });
+
   // --- 直接URL・再読み込み ------------------------------------------------------
   await step("再読み込みで各画面がそのまま表示される（診断は回答を保存しないため開始画面に戻る）", async () => {
     const { context, page, errors } = await newPage(browser);
